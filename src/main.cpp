@@ -1,296 +1,413 @@
+#include <Arduino.h>
 #include <M5Cardputer.h>
 #include <WiFi.h>
-#include <WiFiManager.h>
 #include <WiFiClient.h>
-#include <WebServer.h>
 #include <Preferences.h>
+#include <SPI.h>
+#include <SD.h>
 
-static const char* AP_NAME = "CivSwitch-Cardputer";
-static const uint16_t LOADER_PORT = 9026;
-static const uint32_t CHECK_INTERVAL_MS = 5000;
+// CivSwitch Cardputer-Adv: local configuration + TCP test + SD inspection.
+// No exploit, jailbreak, or arbitrary payload sender is implemented.
+static constexpr uint16_t PORT = 9026;
+static constexpr uint32_t PROBE_INTERVAL = 10000;
+static constexpr uint32_t CONNECT_TIMEOUT = 20000;
+static constexpr int SD_CS = 12;
+static constexpr int SD_SCK = 40;
+static constexpr int SD_MISO = 39;
+static constexpr int SD_MOSI = 14;
+static constexpr int MAX_NETWORKS = 16;
 
-enum class ScreenState { HOME, WIFI_PORTAL, DIAGNOSTICS };
-ScreenState screenState = ScreenState::HOME;
+enum class Page { HOME, MENU, WIFI_SCAN, WIFI_LIST, EDIT_SSID, EDIT_PASSWORD,
+                  EDIT_IP, CONNECTING, DIAGNOSTICS, SD_INFO };
+Page page = Page::HOME;
+Preferences prefs;
+String switchIp = "192.168.1.100";
+String pendingSsid;
+String editor;
+String status = "Ready";
+String lastDiag = "Not tested";
+String payloadPath;
+String payloadHeader;
+String lastKey = "-";
+String networks[MAX_NETWORKS];
+bool networkOpen[MAX_NETWORKS] = {};
+bool sdPresent = false, payloadPresent = false, fakeConsole = false, portOpen = false;
+uint32_t payloadSize = 0, checksOK = 0, checksFail = 0;
+uint32_t lastProbe = 0, lastDraw = 0, connectStart = 0;
+int networkCount = 0, selected = 0, menuSelected = 0, progress = 0;
+bool drawingDirty = true;
 
-WiFiManager wifiManager;
-Preferences preferences;
-WiFiManagerParameter consoleIpField("switch_ip", "Switch 2 IP address", "192.168.1.100", 16);
-String consoleIp = "192.168.1.100";
-
-bool portalStarted = false;
-bool keyAWasDown = false, keyBWasDown = false, keyCWasDown = false, keyRWasDown = false;
-String lastKey = "none";
-bool loaderReachable = false;
-bool checking = false;
-uint32_t lastCheck = 0;
-uint32_t lastDraw = 0;
-uint32_t successfulChecks = 0;
-uint32_t failedChecks = 0;
-String lastDiagnostic = "Not checked";
-String statusLine = "Starting...";
-int progress = 0;
-
-void drawHeader() {
-  auto& d = M5Cardputer.Display;
+void go(Page next) { page = next; drawingDirty = true; }
+String cut(String value, unsigned int width = 37) {
+  if (value.length() > width) return value.substring(0, width - 2) + "..";
+  return value;
+}
+void lineAt(int y, const String &value, uint16_t color = TFT_WHITE) {
+  auto &d = M5Cardputer.Display;
+  d.setTextColor(color, TFT_BLACK);
+  d.setCursor(7, y);
+  d.print(cut(value));
+}
+void footer(const String &value) {
+  M5Cardputer.Display.fillRect(0, 121, 240, 14, TFT_BLACK);
+  lineAt(125, value, TFT_YELLOW);
+}
+void header(const String &title) {
+  auto &d = M5Cardputer.Display;
+  d.fillScreen(TFT_BLACK);
   d.fillRect(0, 0, 240, 20, 0x2124);
+  d.setTextSize(1);
   d.setTextColor(TFT_WHITE, 0x2124);
-  d.setTextSize(1);
   d.setCursor(5, 6);
-  d.print("CIVSWITCH  /  CARDPUTER-ADV");
+  d.print("CIVSWITCH / " + title);
 }
 
-void drawProgress(int pct) {
-  auto& d = M5Cardputer.Display;
-  pct = constrain(pct, 0, 100);
-  d.drawRect(8, 105, 224, 12, TFT_WHITE);
-  d.fillRect(10, 107, 220, 8, TFT_BLACK);
-  if (pct > 0) d.fillRect(10, 107, (220 * pct) / 100, 8, TFT_GREEN);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
-  d.setCursor(8, 121);
-  d.printf("%d%%", pct);
-}
-
-void drawHome() {
-  auto& d = M5Cardputer.Display;
-  d.fillScreen(TFT_BLACK);
-  drawHeader();
-
-  d.setTextColor(TFT_CYAN, TFT_BLACK);
-  d.setTextSize(2);
-  d.setCursor(8, 28);
-  d.print("STANDALONE UI");
-
-  d.setTextSize(1);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
-  d.setCursor(8, 55);
-  d.printf("Wi-Fi: %s", WiFi.isConnected() ? "CONNECTED" : "OFFLINE");
-  d.setCursor(8, 68);
-  if (WiFi.isConnected()) d.printf("IP: %s", WiFi.localIP().toString().c_str());
-  else d.print("IP: --");
-
-  d.setCursor(8, 82);
-  d.printf("CivSwitch loader: %s", loaderReachable ? "PORT 9026 OPEN" : "NOT VERIFIED");
-  d.setCursor(8, 95);
-  d.print(statusLine);
-  drawProgress(progress);
-
-  d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(8, 123);
-  d.print("A:WiFi B:Diag C:Test R:Reconnect");
-}
-
-void drawDiagnostics() {
-  auto& d = M5Cardputer.Display;
-  d.fillScreen(TFT_BLACK);
-  drawHeader();
-  d.setTextColor(TFT_CYAN, TFT_BLACK);
-  d.setTextSize(2);
-  d.setCursor(8, 28);
-  d.print("DIAGNOSTICS");
-  d.setTextSize(1);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
-  d.setCursor(8, 56);
-  d.printf("Wi-Fi: %s", WiFi.isConnected() ? "OK" : "NOT CONNECTED");
-  d.setCursor(8, 70);
-  d.printf("RSSI: %d dBm", WiFi.isConnected() ? WiFi.RSSI() : 0);
-  d.setCursor(8, 84);
-  d.printf("Switch: %s", consoleIp.c_str());
-  d.setCursor(8, 95);
-  d.printf("TCP %u: %s", LOADER_PORT, loaderReachable ? "OPEN" : "CLOSED");
-  d.setCursor(8, 106);
-  d.printf("Checks: %lu ok / %lu fail",
-           (unsigned long)successfulChecks, (unsigned long)failedChecks);
-  d.setCursor(8, 117);
-  d.print("Key: " + lastKey);
-  d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(8, 123);
-  d.print("A:Home  C:Test  B:Diag");
-}
-
-void drawPortal() {
-  auto& d = M5Cardputer.Display;
-  d.fillScreen(TFT_BLACK);
-  drawHeader();
-  d.setTextColor(TFT_CYAN, TFT_BLACK);
-  d.setTextSize(2);
-  d.setCursor(8, 30);
-  d.print("WI-FI SETUP");
-  d.setTextSize(1);
-  d.setTextColor(TFT_WHITE, TFT_BLACK);
-  d.setCursor(8, 60);
-  d.print("Connect phone to:");
-  d.setCursor(8, 74);
-  d.print(AP_NAME);
-  d.setCursor(8, 92);
-  d.print("Then open 192.168.4.1");
-  d.setCursor(8, 110);
-  d.print("Select your Wi-Fi network");
-  d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(8, 123);
-  d.print("A:Close portal / Home");
-}
-
-bool testLoaderPort() {
-  if (WiFi.status() != WL_CONNECTED) {
-    lastDiagnostic = "Wi-Fi disconnected";
-    return false;
+void draw() {
+  auto &d = M5Cardputer.Display;
+  switch (page) {
+    case Page::HOME: {
+      header("HOME");
+      lineAt(29, "WiFi: " + String(WiFi.isConnected() ? WiFi.SSID() : "OFFLINE"), TFT_CYAN);
+      lineAt(42, "Device IP: " + (WiFi.isConnected() ? WiFi.localIP().toString() : "--"));
+      lineAt(55, "Switch IP: " + switchIp);
+      lineAt(68, "Port 9026: " + String(fakeConsole ? "PC EMULATOR" : (portOpen ? "TCP OPEN" : "NOT CONNECTED")));
+      lineAt(81, "SD payload: " + String(payloadPresent ? "FOUND" : (sdPresent ? "MISSING" : "NO SD")));
+      lineAt(94, status);
+      d.drawRect(8, 109, 224, 9, TFT_WHITE);
+      d.fillRect(10, 111, 220, 5, TFT_BLACK);
+      if (progress) d.fillRect(10, 111, (220 * progress) / 100, 5, TFT_GREEN);
+      footer("A:Setup B:Diag C:Test R:WiFi");
+      break;
+    }
+    case Page::MENU:
+      header("ON-DEVICE SETUP");
+      lineAt(26, "W/S move, ENTER choose", TFT_CYAN);
+      {
+        const char* items[] = {"Scan Wi-Fi networks", "Enter Wi-Fi name", "Set Switch / PC IP", "Check microSD payload", "Back to Home"};
+        for (int i = 0; i < 5; ++i)
+          lineAt(43 + 15 * i, String(i == menuSelected ? "> " : "  ") + items[i],
+                 i == menuSelected ? TFT_YELLOW : TFT_WHITE);
+      }
+      footer("X:Home");
+      break;
+    case Page::WIFI_SCAN:
+      header("WI-FI SCAN");
+      lineAt(45, "Looking for nearby networks...", TFT_CYAN);
+      lineAt(65, "Please wait.");
+      footer("X:Back");
+      break;
+    case Page::WIFI_LIST: {
+      header("WI-FI NETWORKS");
+      lineAt(24, String(networkCount) + " found; W/S select", TFT_CYAN);
+      int start = (selected / 5) * 5;
+      for (int i = start; i < networkCount && i < start + 5; ++i) {
+        lineAt(41 + (i - start) * 15,
+               String(selected == i ? "> " : "  ") + cut(networks[i], 28) + (networkOpen[i] ? " [O]" : " [*]"),
+               selected == i ? TFT_YELLOW : TFT_WHITE);
+      }
+      if (!networkCount) lineAt(53, "None found; M to enter manually");
+      footer("ENTER:Join M:Manual X:Back");
+      break;
+    }
+    case Page::EDIT_SSID:
+    case Page::EDIT_PASSWORD:
+    case Page::EDIT_IP: {
+      const bool pass = (page == Page::EDIT_PASSWORD);
+      header(page == Page::EDIT_SSID ? "WI-FI NAME" : (pass ? "WI-FI PASSWORD" : "SWITCH / PC IP"));
+      lineAt(32, pass ? "Network: " + pendingSsid : (page == Page::EDIT_IP ? "IPv4 address of target:" : "Type the network name:"), TFT_CYAN);
+      String shown = pass ? String("") : editor;
+      if (pass) for (unsigned int i = 0; i < editor.length(); ++i) shown += '*';
+      lineAt(59, cut(shown, 36), TFT_WHITE);
+      d.drawFastHLine(7, 72, 226, TFT_CYAN);
+      lineAt(83, pass ? "Password is hidden" : "Use the built-in keyboard");
+      lineAt(99, "Backspace removes a character");
+      footer("ENTER:Save Fn+ESC:Cancel");
+      break;
+    }
+    case Page::CONNECTING:
+      header("CONNECTING");
+      lineAt(35, "Wi-Fi: " + pendingSsid, TFT_CYAN);
+      lineAt(56, "Connecting... up to 20 seconds");
+      lineAt(80, cut(status));
+      footer("X:Cancel");
+      break;
+    case Page::DIAGNOSTICS:
+      header("DIAGNOSTICS");
+      lineAt(26, "Wi-Fi: " + String(WiFi.isConnected() ? "CONNECTED" : "OFFLINE"), TFT_CYAN);
+      lineAt(39, "RSSI: " + String(WiFi.isConnected() ? WiFi.RSSI() : 0) + " dBm");
+      lineAt(52, "Target: " + switchIp);
+      lineAt(65, "TCP 9026: " + String(fakeConsole ? "PC EMULATOR" : (portOpen ? "OPEN" : "CLOSED")));
+      lineAt(78, "Checks: " + String(checksOK) + " OK / " + String(checksFail) + " failed");
+      lineAt(91, "SD: " + String(payloadPresent ? "payload found" : (sdPresent ? "payload missing" : "no card")));
+      lineAt(104, cut(lastDiag));
+      footer("A:Home C:Retest D:SD");
+      break;
+    case Page::SD_INFO:
+      header("MICROSD PAYLOAD");
+      lineAt(29, "Card: " + String(sdPresent ? "MOUNTED" : "NOT DETECTED"), TFT_CYAN);
+      lineAt(44, "Payload: " + String(payloadPresent ? "FOUND" : "NOT FOUND"));
+      lineAt(59, "File: " + (payloadPresent ? payloadPath : "/civswitch/payload.bin"));
+      lineAt(74, "Size: " + String(payloadPresent ? String(payloadSize) + " bytes" : "--"));
+      lineAt(89, "First bytes: " + (payloadPresent ? payloadHeader : "--"));
+      lineAt(104, "Only inspected; NOT transmitted", TFT_YELLOW);
+      footer("C:Rescan A:Home");
+      break;
   }
-  WiFiClient client;
-  client.setTimeout(1500);
-  bool ok = client.connect(consoleIp.c_str(), LOADER_PORT);
-  // A successful TCP handshake only proves that a service accepts connections.
-  // It does not prove that the CivSwitch loader is ready or compatible.
-  if (ok) {
-    client.stop();
-    lastDiagnostic = "TCP handshake succeeded";
-    successfulChecks++;
-    return true;
-  }
-  lastDiagnostic = "No service at Switch IP:9026";
-  failedChecks++;
-  return false;
+  drawingDirty = false;
+  lastDraw = millis();
 }
 
-void runDiagnostics() {
-  statusLine = "Checking Wi-Fi...";
-  progress = 10;
-  if (WiFi.status() != WL_CONNECTED) {
-    loaderReachable = false;
-    progress = 0;
-    statusLine = "Connect to Wi-Fi first";
+void inspectSD() {
+  sdPresent = false;
+  payloadPresent = false;
+  payloadPath = "";
+  payloadHeader = "";
+  payloadSize = 0;
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  if (!SD.begin(SD_CS, SPI, 10000000)) {
+    status = "microSD not mounted";
     return;
   }
-  progress = 45;
-  statusLine = "Testing TCP connection...";
-  loaderReachable = testLoaderPort();
-  progress = loaderReachable ? 100 : 0;
-  statusLine = loaderReachable ? "TCP endpoint reachable" : "Loader not detected";
+  sdPresent = SD.cardType() != CARD_NONE;
+  if (!sdPresent) return;
+  const char* paths[] = {"/civswitch/payload.bin", "/payload.bin"};
+  for (auto path : paths) {
+    if (!SD.exists(path)) continue;
+    File f = SD.open(path, FILE_READ);
+    if (!f || f.isDirectory()) { if (f) f.close(); continue; }
+    payloadPath = path;
+    payloadSize = f.size();
+    payloadPresent = payloadSize > 0;
+    for (int i = 0; i < 8 && f.available(); ++i) {
+      uint8_t b = (uint8_t) f.read();
+      char hex[4];
+      snprintf(hex, sizeof(hex), "%02X", b);
+      if (i) payloadHeader += " ";
+      payloadHeader += hex;
+    }
+    f.close();
+    break;
+  }
 }
 
-void startPortal() {
-  screenState = ScreenState::WIFI_PORTAL;
-  drawPortal();
-  wifiManager.setConfigPortalTimeout(0);
-  wifiManager.setAPCallback([](WiFiManager*) {
-    portalStarted = true;
-  });
-  // The nonblocking WiFiManager portal stays responsive to keyboard updates.
-  wifiManager.startConfigPortal(AP_NAME);
-  portalStarted = wifiManager.getConfigPortalActive();
-  statusLine = portalStarted ? "Portal at 192.168.4.1" : "Portal could not start";
+void testPort() {
+  portOpen = false;
+  fakeConsole = false;
+  if (WiFi.status() != WL_CONNECTED) {
+    status = "Wi-Fi offline";
+    lastDiag = status;
+    progress = 0;
+    drawingDirty = true;
+    return;
+  }
+  IPAddress target;
+  if (!target.fromString(switchIp)) {
+    status = "Invalid target IPv4 address";
+    lastDiag = status;
+    progress = 0;
+    drawingDirty = true;
+    return;
+  }
+  WiFiClient client;
+  if (!client.connect(target, PORT, 1200)) {
+    checksFail++;
+    status = "No TCP service at port 9026";
+    lastDiag = status;
+    progress = 35;
+  } else {
+    checksOK++;
+    portOpen = true;
+    uint32_t start = millis();
+    String banner;
+    while (millis() - start < 220 && banner.length() < 48) {
+      while (client.available() && banner.length() < 48) banner += (char)client.read();
+      if (banner.indexOf('\n') >= 0) break;
+      delay(5);
+    }
+    fakeConsole = banner.startsWith("CIVSWITCH-EMU/1");
+    client.stop();
+    lastDiag = fakeConsole ? "Test PC emulator handshake OK" : "TCP accepted (loader unverified)";
+    status = fakeConsole ? "PC emulator reachable" : "TCP 9026 open";
+    progress = 100; // Connectivity only; NOT exploit or payload progress.
+  }
+  lastProbe = millis();
+  drawingDirty = true;
+}
+
+void startScan() {
+  networkCount = 0;
+  selected = 0;
+  WiFi.scanDelete();
+  WiFi.scanNetworks(true);
+  go(Page::WIFI_SCAN);
+}
+
+void beginConnect() {
+  if (pendingSsid.length() == 0) { status = "Wi-Fi name is empty"; go(Page::MENU); return; }
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(true);
+  WiFi.disconnect(false, false);
+  if (editor.length() > 0) WiFi.begin(pendingSsid.c_str(), editor.c_str());
+  else WiFi.begin(pendingSsid.c_str());
+  editor = ""; // Do not retain the password in the UI.
+  connectStart = millis();
+  progress = 20;
+  status = "Trying " + pendingSsid;
+  go(Page::CONNECTING);
+}
+
+void saveIP() {
+  IPAddress ip;
+  if (!ip.fromString(editor)) {
+    status = "Invalid IPv4 (e.g. 192.168.1.50)";
+    go(Page::HOME);
+    return;
+  }
+  switchIp = ip.toString();
+  prefs.begin("civswitch", false);
+  prefs.putString("switch_ip", switchIp);
+  prefs.end();
+  status = "Target IP saved";
+  portOpen = false;
+  fakeConsole = false;
+  go(Page::HOME);
+}
+
+void selectMenu() {
+  switch (menuSelected) {
+    case 0: startScan(); break;
+    case 1: editor = ""; go(Page::EDIT_SSID); break;
+    case 2: editor = switchIp; go(Page::EDIT_IP); break;
+    case 3: inspectSD(); go(Page::SD_INFO); break;
+    default: go(Page::HOME); break;
+  }
+}
+
+void handleKeyboard(const Keyboard_Class::KeysState &k) {
+  if (page == Page::EDIT_SSID || page == Page::EDIT_PASSWORD || page == Page::EDIT_IP) {
+    if (k.esc) { editor = ""; go(Page::MENU); return; }
+    if (k.backspace || k.del) {
+      if (editor.length()) editor.remove(editor.length() - 1);
+      drawingDirty = true;
+    }
+    for (char c : k.word) {
+      const size_t limit = page == Page::EDIT_SSID ? 32 : (page == Page::EDIT_PASSWORD ? 63 : 15);
+      if (c >= 32 && c <= 126 && editor.length() < limit) { editor += c; drawingDirty = true; }
+    }
+    if (k.enter) {
+      if (page == Page::EDIT_SSID) {
+        pendingSsid = editor;
+        editor = "";
+        go(Page::EDIT_PASSWORD);
+      } else if (page == Page::EDIT_PASSWORD) beginConnect();
+      else saveIP();
+    }
+    return;
+  }
+
+  for (char c : k.word) {
+    if (page == Page::HOME) {
+      if (c == 'a') { menuSelected = 0; go(Page::MENU); }
+      else if (c == 'b') go(Page::DIAGNOSTICS);
+      else if (c == 'c') testPort();
+      else if (c == 'r') {
+        if (WiFi.isConnected()) { WiFi.disconnect(false, false); }
+        WiFi.reconnect();
+        status = "Wi-Fi reconnect requested";
+        drawingDirty = true;
+      }
+    } else if (page == Page::MENU) {
+      if (c == 'w' && menuSelected > 0) { menuSelected--; drawingDirty = true; }
+      else if (c == 's' && menuSelected < 4) { menuSelected++; drawingDirty = true; }
+      else if (c == 'x') go(Page::HOME);
+    } else if (page == Page::WIFI_LIST) {
+      if (c == 'w' && selected > 0) { selected--; drawingDirty = true; }
+      else if (c == 's' && selected < networkCount - 1) { selected++; drawingDirty = true; }
+      else if (c == 'm') { editor = ""; go(Page::EDIT_SSID); }
+      else if (c == 'x') go(Page::MENU);
+    } else if (page == Page::WIFI_SCAN && c == 'x') go(Page::MENU);
+    else if (page == Page::CONNECTING && c == 'x') {
+      WiFi.disconnect(false, false);
+      status = "Connection cancelled";
+      go(Page::HOME);
+    } else if (page == Page::DIAGNOSTICS) {
+      if (c == 'a' || c == 'x') go(Page::HOME);
+      else if (c == 'c') testPort();
+      else if (c == 'd') { inspectSD(); go(Page::SD_INFO); }
+    } else if (page == Page::SD_INFO) {
+      if (c == 'a' || c == 'x') go(Page::HOME);
+      else if (c == 'c') { inspectSD(); drawingDirty = true; }
+    }
+  }
+
+  if (k.enter) {
+    if (page == Page::MENU) selectMenu();
+    else if (page == Page::WIFI_LIST && networkCount > 0) {
+      pendingSsid = networks[selected];
+      editor = "";
+      if (networkOpen[selected]) beginConnect();
+      else go(Page::EDIT_PASSWORD);
+    }
+  }
 }
 
 void setup() {
+  Serial.begin(115200);
   auto cfg = M5.config();
   M5Cardputer.begin(cfg, true);
-  M5Cardputer.Display.setRotation(0);
+  M5Cardputer.Display.setRotation(0); // Preserve the original orientation.
   M5Cardputer.Display.setTextWrap(false);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
-  drawHome();
+  prefs.begin("civswitch", true);
+  switchIp = prefs.getString("switch_ip", "192.168.1.100");
+  prefs.end();
 
-  preferences.begin("civswitch", true);
-  consoleIp = preferences.getString("switch_ip", "192.168.1.100");
-  preferences.end();
-  consoleIpField.setValue(consoleIp.c_str(), 16);
+  inspectSD();
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(true);
   WiFi.setSleep(false);
-  wifiManager.addParameter(&consoleIpField);
-  wifiManager.setSaveConfigCallback([]() {
-    preferences.begin("civswitch", false);
-    preferences.putString("switch_ip", consoleIpField.getValue());
-    preferences.end();
-  });
-  wifiManager.setConnectTimeout(10);
-  wifiManager.setConfigPortalBlocking(false);
-  wifiManager.setConfigPortalTimeout(0);
-
-  statusLine = "Connecting to saved Wi-Fi...";
+  WiFi.begin(); // Reuse saved ESP32 credentials; no phone setup.
   progress = 10;
-  drawHome();
-  bool connected = wifiManager.autoConnect(AP_NAME);
-  if (connected) {
-    progress = 35;
-    statusLine = "Wi-Fi connected; checking loader";
-    runDiagnostics();
-  } else {
-    screenState = ScreenState::WIFI_PORTAL;
-    portalStarted = wifiManager.getConfigPortalActive();
-    statusLine = "Wi-Fi setup required";
-  }
-  if (screenState == ScreenState::WIFI_PORTAL) drawPortal();
-  else drawHome();
+  status = "A: Configure on Cardputer";
+  draw();
 }
 
 void loop() {
   M5Cardputer.update();
-  wifiManager.process(); // Nonblocking Wi-Fi setup portal
-
-  // Edge-triggered input so each key press triggers a single action.
-  auto& kb = M5Cardputer.Keyboard;
-  const bool a = kb.isKeyPressed('a') || kb.isKeyPressed('A');
-  const bool b = kb.isKeyPressed('b') || kb.isKeyPressed('B');
-  const bool c = kb.isKeyPressed('c') || kb.isKeyPressed('C');
-  const bool r = kb.isKeyPressed('r') || kb.isKeyPressed('R');
-
-  if (a && !keyAWasDown) {
-    lastKey = "A";
-    if (screenState == ScreenState::HOME) startPortal();
-    else if (screenState == ScreenState::WIFI_PORTAL) {
-      wifiManager.stopConfigPortal();
-      portalStarted = false;
-      screenState = ScreenState::HOME;
-      statusLine = "Portal closed";
-    } else screenState = ScreenState::HOME;
-    if (screenState == ScreenState::WIFI_PORTAL) drawPortal();
-    else drawHome();
-  }
-  if (b && !keyBWasDown) {
-    lastKey = "B";
-    screenState = ScreenState::DIAGNOSTICS;
-    drawDiagnostics();
-  }
-  if (c && !keyCWasDown) {
-    lastKey = "C";
-    runDiagnostics();
-    screenState = ScreenState::DIAGNOSTICS;
-    drawDiagnostics();
-  }
-  if (r && !keyRWasDown) {
-    lastKey = "R";
-    statusLine = "Reconnecting Wi-Fi...";
-    WiFi.reconnect();
-    screenState = ScreenState::HOME;
-    drawHome();
-  }
-  keyAWasDown = a;
-  keyBWasDown = b;
-  keyCWasDown = c;
-  keyRWasDown = r;
-
-  if (screenState == ScreenState::WIFI_PORTAL && !wifiManager.getConfigPortalActive()) {
-    portalStarted = false;
-    consoleIp = String(consoleIpField.getValue());
-    screenState = ScreenState::HOME;
-    statusLine = WiFi.isConnected() ? "Wi-Fi connected" : "Wi-Fi setup closed";
-    drawHome();
+  if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+    handleKeyboard(M5Cardputer.Keyboard.keysState());
   }
 
-  if (screenState == ScreenState::HOME && millis() - lastCheck > CHECK_INTERVAL_MS) {
-    lastCheck = millis();
-    if (WiFi.isConnected()) {
-      loaderReachable = testLoaderPort();
-      progress = loaderReachable ? 100 : 35;
-      statusLine = loaderReachable ? "TCP endpoint reachable" : "Wi-Fi OK; loader unverified";
-    } else {
-      loaderReachable = false;
-      progress = 0;
-      statusLine = "Wi-Fi disconnected";
+  if (page == Page::WIFI_SCAN) {
+    int n = WiFi.scanComplete();
+    if (n >= 0) {
+      networkCount = n < MAX_NETWORKS ? n : MAX_NETWORKS;
+      for (int i = 0; i < networkCount; ++i) {
+        networks[i] = WiFi.SSID(i);
+        networkOpen[i] = WiFi.encryptionType(i) == WIFI_AUTH_OPEN;
+      }
+      WiFi.scanDelete();
+      selected = 0;
+      go(Page::WIFI_LIST);
+    } else if (n == WIFI_SCAN_FAILED) {
+      status = "Wi-Fi scan failed";
+      go(Page::MENU);
     }
-    drawHome();
   }
-  if (screenState == ScreenState::DIAGNOSTICS && millis() - lastDraw > 1500) {
-    lastDraw = millis();
-    drawDiagnostics();
+  if (page == Page::CONNECTING) {
+    if (WiFi.status() == WL_CONNECTED) {
+      status = "Connected to " + WiFi.SSID();
+      progress = 40;
+      go(Page::HOME);
+    } else if (millis() - connectStart > CONNECT_TIMEOUT) {
+      status = "Wi-Fi failed; check password";
+      progress = 0;
+      go(Page::HOME);
+    }
   }
+  if (page == Page::HOME && WiFi.isConnected() && millis() - lastProbe > PROBE_INTERVAL) {
+    testPort();
+  }
+  if (page == Page::HOME && millis() - lastDraw > 2500) drawingDirty = true;
+  if (drawingDirty) draw();
   delay(10);
 }
