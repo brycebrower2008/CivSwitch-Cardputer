@@ -18,6 +18,8 @@ WiFiManagerParameter consoleIpField("switch_ip", "Switch 2 IP address", "192.168
 String consoleIp = "192.168.1.100";
 
 bool portalStarted = false;
+bool keyAWasDown = false, keyBWasDown = false, keyCWasDown = false, keyRWasDown = false;
+String lastKey = "none";
 bool loaderReachable = false;
 bool checking = false;
 uint32_t lastCheck = 0;
@@ -73,8 +75,8 @@ void drawHome() {
   drawProgress(progress);
 
   d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(8, 133);
-  d.print("A=Wi-Fi setup  B=diagnostics");
+  d.setCursor(8, 123);
+  d.print("A:WiFi B:Diag C:Test R:Reconnect");
 }
 
 void drawDiagnostics() {
@@ -93,15 +95,16 @@ void drawDiagnostics() {
   d.printf("RSSI: %d dBm", WiFi.isConnected() ? WiFi.RSSI() : 0);
   d.setCursor(8, 84);
   d.printf("Switch: %s", consoleIp.c_str());
+  d.setCursor(8, 95);
   d.printf("TCP %u: %s", LOADER_PORT, loaderReachable ? "OPEN" : "CLOSED");
-  d.setCursor(8, 98);
+  d.setCursor(8, 106);
   d.printf("Checks: %lu ok / %lu fail",
            (unsigned long)successfulChecks, (unsigned long)failedChecks);
-  d.setCursor(8, 112);
-  d.print(lastDiagnostic.substring(0, 37));
+  d.setCursor(8, 117);
+  d.print("Key: " + lastKey);
   d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(8, 133);
-  d.print("A=home  C=retest");
+  d.setCursor(8, 123);
+  d.print("A:Home  C:Test  B:Diag");
 }
 
 void drawPortal() {
@@ -123,8 +126,8 @@ void drawPortal() {
   d.setCursor(8, 110);
   d.print("Select your Wi-Fi network");
   d.setTextColor(TFT_YELLOW, TFT_BLACK);
-  d.setCursor(8, 133);
-  d.print("Portal stays open until saved");
+  d.setCursor(8, 123);
+  d.print("A:Close portal / Home");
 }
 
 bool testLoaderPort() {
@@ -171,23 +174,16 @@ void startPortal() {
   wifiManager.setAPCallback([](WiFiManager*) {
     portalStarted = true;
   });
-  // Blocking captive portal; returns after credentials are saved.
-  bool ok = wifiManager.startConfigPortal(AP_NAME);
-  portalStarted = false;
-  if (ok && WiFi.isConnected()) {
-    screenState = ScreenState::HOME;
-    statusLine = "Wi-Fi connected";
-    runDiagnostics();
-  } else {
-    screenState = ScreenState::HOME;
-    statusLine = "Wi-Fi setup ended";
-  }
+  // The nonblocking WiFiManager portal stays responsive to keyboard updates.
+  wifiManager.startConfigPortal(AP_NAME);
+  portalStarted = wifiManager.getConfigPortalActive();
+  statusLine = portalStarted ? "Portal at 192.168.4.1" : "Portal could not start";
 }
 
 void setup() {
   auto cfg = M5.config();
   M5Cardputer.begin(cfg, true);
-  M5Cardputer.Display.setRotation(0);
+  M5Cardputer.Display.setRotation(1);
   M5Cardputer.Display.setTextWrap(false);
   M5Cardputer.Display.fillScreen(TFT_BLACK);
   drawHome();
@@ -204,7 +200,8 @@ void setup() {
     preferences.putString("switch_ip", consoleIpField.getValue());
     preferences.end();
   });
-  wifiManager.setConnectTimeout(20);
+  wifiManager.setConnectTimeout(10);
+  wifiManager.setConfigPortalBlocking(false);
   wifiManager.setConfigPortalTimeout(0);
 
   statusLine = "Connecting to saved Wi-Fi...";
@@ -216,42 +213,66 @@ void setup() {
     statusLine = "Wi-Fi connected; checking loader";
     runDiagnostics();
   } else {
+    screenState = ScreenState::WIFI_PORTAL;
+    portalStarted = wifiManager.getConfigPortalActive();
     statusLine = "Wi-Fi setup required";
-    startPortal();
   }
-  drawHome();
+  if (screenState == ScreenState::WIFI_PORTAL) drawPortal();
+  else drawHome();
 }
 
 void loop() {
   M5Cardputer.update();
+  wifiManager.process(); // Nonblocking Wi-Fi setup portal
 
-  if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
-    auto keys = M5Cardputer.Keyboard.keysState();
-    for (auto c : keys.word) {
-      if (c == 'a' || c == 'A') {
-        if (screenState == ScreenState::DIAGNOSTICS) {
-          screenState = ScreenState::HOME;
-          drawHome();
-        } else if (screenState == ScreenState::HOME) {
-          startPortal();
-          drawHome();
-        }
-      } else if (c == 'b' || c == 'B') {
-        screenState = ScreenState::DIAGNOSTICS;
-        drawDiagnostics();
-      } else if (c == 'c' || c == 'C') {
-        runDiagnostics();
-        screenState = ScreenState::DIAGNOSTICS;
-        drawDiagnostics();
-      } else if (c == 'r' || c == 'R') {
-        WiFi.disconnect();
-        statusLine = "Reconnecting...";
-        progress = 5;
-        bool ok = WiFi.reconnect();
-        if (ok) runDiagnostics();
-        drawHome();
-      }
-    }
+  // Edge-triggered input so each key press triggers a single action.
+  auto& kb = M5Cardputer.Keyboard;
+  const bool a = kb.isKeyPressed('a') || kb.isKeyPressed('A');
+  const bool b = kb.isKeyPressed('b') || kb.isKeyPressed('B');
+  const bool c = kb.isKeyPressed('c') || kb.isKeyPressed('C');
+  const bool r = kb.isKeyPressed('r') || kb.isKeyPressed('R');
+
+  if (a && !keyAWasDown) {
+    lastKey = "A";
+    if (screenState == ScreenState::HOME) startPortal();
+    else if (screenState == ScreenState::WIFI_PORTAL) {
+      wifiManager.stopConfigPortal();
+      portalStarted = false;
+      screenState = ScreenState::HOME;
+      statusLine = "Portal closed";
+    } else screenState = ScreenState::HOME;
+    if (screenState == ScreenState::WIFI_PORTAL) drawPortal();
+    else drawHome();
+  }
+  if (b && !keyBWasDown) {
+    lastKey = "B";
+    screenState = ScreenState::DIAGNOSTICS;
+    drawDiagnostics();
+  }
+  if (c && !keyCWasDown) {
+    lastKey = "C";
+    runDiagnostics();
+    screenState = ScreenState::DIAGNOSTICS;
+    drawDiagnostics();
+  }
+  if (r && !keyRWasDown) {
+    lastKey = "R";
+    statusLine = "Reconnecting Wi-Fi...";
+    WiFi.reconnect();
+    screenState = ScreenState::HOME;
+    drawHome();
+  }
+  keyAWasDown = a;
+  keyBWasDown = b;
+  keyCWasDown = c;
+  keyRWasDown = r;
+
+  if (screenState == ScreenState::WIFI_PORTAL && !wifiManager.getConfigPortalActive()) {
+    portalStarted = false;
+    consoleIp = String(consoleIpField.getValue());
+    screenState = ScreenState::HOME;
+    statusLine = WiFi.isConnected() ? "Wi-Fi connected" : "Wi-Fi setup closed";
+    drawHome();
   }
 
   if (screenState == ScreenState::HOME && millis() - lastCheck > CHECK_INTERVAL_MS) {
@@ -267,7 +288,6 @@ void loop() {
     }
     drawHome();
   }
-
   if (screenState == ScreenState::DIAGNOSTICS && millis() - lastDraw > 1500) {
     lastDraw = millis();
     drawDiagnostics();
