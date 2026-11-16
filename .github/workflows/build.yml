@@ -26,5 +26,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CivSwitch-Cardputer-Adv-firmware
-          path: .pio/build/esp32-s3-devkitc-1/firmware.bin
+          path: .pio/build/cardputer-adv/firmware.bin
           if-no-files-found: error
