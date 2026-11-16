@@ -1,81 +1,70 @@
-# CivSwitch Cardputer-Adv (Switch 2) — standalone UI/diagnostic shell
+# CivSwitch Cardputer-Adv (development firmware)
 
-This project is a standalone ESP32-S3 firmware for the M5Stack Cardputer-Adv.
-It provides a small UI, Wi-Fi provisioning, connection status, a progress
-indicator, and diagnostics for the CivSwitch Remote JS Loader endpoint.
+A Wi-Fi and local diagnostics front-end for M5Stack **Cardputer-Adv**.
 
-## Important scope limitation
+> **Status:** This firmware does **not** contain the Switch 2 jailbreak, the kaiHEN sender, exploit execution, persistence installation, or SD-payload transmission. Port 9026 probes are **connectivity tests only**. A microSD payload file can be detected and inspected, but is **never executed or sent**.
 
-This is **not** a Cardputer port of the CivSwitchFS-kaiHEN exploit. The upstream
-CivSwitchFS-kaiHEN repository currently requires Node.js 20+ and npm for its
-sender, persistence installer, and kaiHEN staging/chain tools. It expects the
-CivSwitch Remote JS Loader to already be running on the Switch 2 and reachable
-on the local network. The exploit payload and kaiHEN chain have not been
-ported to ESP32-S3 here.
+## On-device configuration — no phone needed
 
-The firmware intentionally does not send exploit payloads, modify Switch save
-data, install persistence, or claim that a TCP connection means the exploit
-worked. A successful port-9026 check only establishes that a TCP service
-accepted a connection.
+All settings use the Cardputer keyboard. Original display rotation (0) is retained.
 
-Upstream also warns that its filesystem vulnerability can corrupt save data.
-Read its current instructions and risks before using that project:
-https://github.com/s8n/CivSwitchFS-kaiHEN
+| Screen | Controls |
+| --- | --- |
+| Home | A = Setup; B = Diagnostics; C = TCP test; R = Wi-Fi reconnect |
+| Setup | W / S = move; Enter = select; X = Home |
+| Wi-Fi networks | W / S = move; Enter = connect; M = manual SSID; X = back |
+| Text editor | Type; Backspace removes; Enter saves; Fn + ESC cancels |
+| Diagnostics | A = Home; C = retest; D = SD status |
+| SD status | C = rescan; A = Home |
 
-## Features
+On first boot, press **A → Scan Wi-Fi networks**, choose your network, and type the password. The ESP32 Wi-Fi stack stores saved credentials for later boots. Under Setup → **Set Switch / PC IP**, enter your Switch or test-PC IPv4 address. It is stored in NVS. No WiFiManager/captive portal is used.
 
-- Cardputer-Adv display UI
-- Wi-Fi captive portal for entering network credentials
-- Saved Wi-Fi credentials via WiFiManager
-- Wi-Fi connection and RSSI status
-- TCP reachability test for port 9026
-- Real status-based progress indicator (not simulated exploit progress)
-- Diagnostics counters and last-check result
-- Keyboard shortcuts:
-  - `A`: Wi-Fi setup / return home
-  - `B`: diagnostics
-  - `C`: run diagnostics again
-  - `R`: reconnect Wi-Fi
+## microSD payload file
 
-## Build
+Place your own binary file on a FAT32 microSD card at either path:
 
-1. Install PlatformIO (VS Code extension or CLI).
-2. Open this folder as a PlatformIO project.
-3. Build and upload:
+- /civswitch/payload.bin (preferred)
+- /payload.bin (fallback)
 
-   ```sh
-   pio run
-   pio run -t upload
-   pio device monitor
-   ```
+The Cardputer reports its presence, size and first few bytes. **The firmware does not transmit it.** This repo doesn't bundle or generate an exploit payload. SD SPI pins: CLK 40, MISO 39, MOSI 14, CS 12.
 
-The PlatformIO environment targets an ESP32-S3 dev board definition with
-8 MB flash. The Cardputer-Adv hardware is based on ESP32-S3; verify the
-board profile and flash configuration against your exact Cardputer-Adv
-revision before flashing.
+Check on-device with **A → Check microSD payload** or **B → D**.
 
-## Wi-Fi behavior
+## Windows PC test: test.bat
 
-The Cardputer joins the same LAN as the Switch 2. If no saved credentials
-exist, it starts a setup AP named `CivSwitch-Cardputer`; connect a phone or
-computer to it and browse to `192.168.4.1`.
+The included **test.bat** starts a PowerShell-based fake TCP port 9026 endpoint. It is a **connectivity emulator only**, not a real Switch emulator or a firmware compilation test.
 
-The current diagnostic probes the configured Wi-Fi gateway on TCP port 9026.
-If your Switch has a different IP from the gateway, this check will not find
-it. This UI shell does not yet include a console-IP entry screen or an
-application-level loader handshake.
+1. Put the Cardputer and Windows PC on the same LAN/Wi-Fi.
+2. Double-click test.bat on the PC. Allow the Windows Firewall prompt on Private networks if shown.
+3. Note the PC's IPv4 address displayed in the command window.
+4. On the Cardputer select **A → Set Switch / PC IP**, and enter the PC's IPv4 address.
+5. Press **C** on the Cardputer Home screen. The PC logs an incoming connection, and the Cardputer should show **PC EMULATOR**.
+6. Ctrl+C stops the emulator.
 
-## Next engineering steps for a real standalone port
+The test proves TCP connectivity on port 9026, not that a Switch payload or exploit works.
 
-A real standalone implementation needs, at minimum:
+## Automatic GitHub Releases
 
-1. A documented and stable transport protocol for the loader and console IP
-   selection/discovery.
-2. A complete embedded replacement for the upstream Node.js sender and
-   kaiHEN staging tools.
-3. Porting and validating the actual CivSwitchFS exploit runtime and payload
-   build for ESP32-S3, including memory, storage, and timing constraints.
-4. A safe recovery strategy and extensive testing against the exact Switch
-   firmware, Civ7 build, and kaiHEN release.
+Pushes to **main**, including new commits, and manual Actions runs produce a successful-build Actions artifact AND a development prerelease tagged **dev-N (GitHub run number)**, each containing firmware.bin. A version tag beginning in **v** (for example v0.1.0) produces a regular versioned Release.
 
-None of those exploit-porting steps are implemented by this diagnostic shell.
+- Releases: https://github.com/brycebrower2008/CivSwitch-Cardputer/releases
+- Actions: https://github.com/brycebrower2008/CivSwitch-Cardputer/actions
+
+The compiled binary is an **ESP32-S3 application image**. Flash it using PlatformIO or the correct bootloader/partition/offset flashing procedure. Do not mistake it for a complete merged flash image. Passing CI does not prove the hardware runs correctly.
+
+### Local build
+
+Install PlatformIO, then run:
+
+    pio run -e cardputer-adv
+    pio run -e cardputer-adv -t upload
+
+Application binary: .pio/build/cardputer-adv/firmware.bin
+
+## Technical
+
+- M5Stack Cardputer-Adv ESP32-S3, 8MB flash
+- Remote endpoint TCP diagnostic: port 9026
+- Progress bar = network connectivity only
+- SD file = detected and previewed, not transmitted
+- Upstream reference: https://github.com/s8n/CivSwitchFS-kaiHEN
