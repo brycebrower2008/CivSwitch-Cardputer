@@ -13,7 +13,7 @@ All settings use the Cardputer keyboard. Original display rotation (0) is retain
 | Home | A = Setup; B = Diagnostics; C = TCP test; R = Wi-Fi reconnect |
 | Setup | W / S = move; Enter = select; X = Home |
 | Wi-Fi networks | W / S = move; Enter = connect; M = manual SSID; X = back |
-| Text editor | Type; Backspace removes; Enter saves; Fn + ESC cancels |
+| Text editor | Type; Backspace removes; Enter saves; Tab cancels |
 | Diagnostics | A = Home; C = retest; D = SD status |
 | SD status | C = rescan; A = Home |
 
