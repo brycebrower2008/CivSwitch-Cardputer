@@ -285,8 +285,8 @@ void selectMenu() {
 
 void handleKeyboard(const Keyboard_Class::KeysState &k) {
   if (page == Page::EDIT_SSID || page == Page::EDIT_PASSWORD || page == Page::EDIT_IP) {
-    if (k.esc) { editor = ""; go(Page::MENU); return; }
-    if (k.backspace || k.del) {
+    if (k.tab) { editor = ""; go(Page::MENU); return; }
+    if (k.del) {
       if (editor.length()) editor.remove(editor.length() - 1);
       drawingDirty = true;
     }
