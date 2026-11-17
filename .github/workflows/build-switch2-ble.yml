@@ -18,10 +18,10 @@ jobs:
     steps:
       - name: Check out Bluetooth feature branch
         uses: actions/checkout@v4
-      - name: Build native Switch 2 BLE firmware with ESP-IDF 6.1.1
+      - name: Build native Switch 2 BLE firmware with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v6.1.1
+          esp_idf_version: v6.1
           target: esp32s3
           path: ble-switch2
           command: idf.py build && idf.py merge-bin -o build/ble-switch2-fullflash.bin -f raw
@@ -45,7 +45,7 @@ jobs:
           make_latest: false
           body: |
             EXPERIMENTAL and standalone BLE-only Cardputer-Adv firmware using
-            espp/switch2_pro 1.4.3 and ESP-IDF v6.1.1 for the real Switch 2
+            espp/switch2_pro 1.4.3 and ESP-IDF v6.1 for the real Switch 2
             custom BLE controller protocol (not generic HID-over-GATT).
 
             This DOES NOT include the main Cardputer screen, USB HID, Wi-Fi,
