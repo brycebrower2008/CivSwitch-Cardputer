@@ -9,6 +9,7 @@ void startBle();
 void setTransport(Transport target);
 Transport transport();
 bool usbReady();
+bool keyboardReady();
 bool bleReady();
 bool ready();
 String stateLabel();
