@@ -10,7 +10,7 @@ All settings use the Cardputer keyboard. Original display rotation (0) is retain
 
 | Screen | Controls |
 | --- | --- |
-| Home | A = Setup; B = Diagnostics; C = TCP test; R = Wi-Fi reconnect; **P = JS payloads** |
+| Home | A = Setup; B = Diagnostics; C = TCP test; R = Wi-Fi reconnect; **P = JS payloads; H = HID** |
 | Setup | W / S = move; Enter = select; X = Home |
 | Wi-Fi networks | W / S = move; Enter = connect; M = manual SSID; X = back |
 | Text editor | Type; Backspace removes; Enter saves; Tab cancels |
@@ -20,8 +20,37 @@ All settings use the Cardputer keyboard. Original display rotation (0) is retain
 | JS confirmation | Y = send selected script; X = cancel |
 | JS running | X = abort (remote state may be unknown); USB serial outputs full remote log |
 | JS result | X = list; A = Home |
+| HID | U = USB; L = generic BLE; T = send one A test; M = macro; X = Home |
+| HID confirmation | Y = run macro; X = cancel |
+| HID running | X = abort immediately |
 
 On first boot, press **A → Scan Wi-Fi networks**, choose your network, and type the password. The ESP32 Wi-Fi stack stores saved credentials for later boots. Under Setup → **Set Switch / PC IP**, enter your Switch or test-PC IPv4 address. It is stored in NVS. No WiFiManager/captive portal is used.
+
+## USB HID and Bluetooth controls (experimental)
+
+The M5Stack Cardputer-Adv has a **native USB-C OTG device interface**. The firmware adds USB keyboard + generic USB gamepad HID, and an optional **generic BLE HID-over-GATT keyboard/gamepad**. These are **not yet proven compatible with the Switch 2**. In particular, the generic USB gamepad descriptor is not an exact port of PicoSwitch's dual-interface vendor controller; the Switch 2 Pro Controller uses a **proprietary BLE GATT protocol**, not generic BLE HID. The ESP32-S3 cannot use Bluetooth Classic.
+
+### First test (no keyboard test necessary)
+
+1. Flash the firmware from the latest successful GitHub Release. The original screen orientation is preserved.
+2. Connect the Cardputer's native USB-C port to the **Switch 2 USB port** using a data cable.
+3. Press **H** on the Cardputer Home screen.
+4. Press **U** (USB). The device displays **USB HID enumerated** if the host accepted USB descriptors (this doesn't prove the console accepts gamepad input).
+5. Focus a harmless Switch menu item; press **T** to send **one controller A tap**, with **no keyboard text**. Check if the menu reacts.
+
+Please share whether USB says enumerated and whether the Switch reacts to A. A generic USB gamepad might enumerate but still be ignored by the Switch; if so, its descriptor must be replaced with a Switch-specific one.
+
+### Bluetooth mode
+
+Press **H → L** to start advertising a BLE device called **CivSwitch BLE HID**. This is generic BLE HID keyboard/gamepad, not the Switch 2's custom Pro Controller BLE pairing. The device shows advertising/connected state. A Switch 2 may refuse to pair; **this does not mean ESP32-S3 Bluetooth is defective**. True wireless Switch 2 controller support needs a Nintendo BLE GATT stack and compatible ESP-IDF version, which are not included in this build. Use USB until that support is implemented and hardware-verified.
+
+### SD HID bootstrap
+
+Successful Releases include **sd-payloads.zip**, with the **/civswitch/bootstrap.txt** file generated from the pinned [PicoSwitch](https://github.com/Gezine/CivSwitch) compressed chat-XSS input. Put the entire civswitch directory on the **Cardputer** microSD beside the FS-kaiHEN JavaScript files.
+
+After checking USB/controller A works, start the USB HID chat macro using **H → M → Y**. This is a nonblocking, explicitly confirmed replay of the upstream gamepad A, Esc, text, and Enter input sequence to load CivSwitch Remote JS Loader in Civilization VII lobby chat. It can take around **20 minutes**. **X** aborts, potentially leaving partially entered chat text. It never starts automatically when USB is plugged in.
+
+**Risk:** It can trigger the exploit and damage game saves on unsupported configurations. Back up saves and follow upstream setup/compatibility warnings. A completed macro only means input reports were sent; it is **not proof** that CivSwitch/FS-kaiHEN succeeded or that TCP port 9026 is active.
 
 ## FS-kaiHEN JS sender (experimental, no PC at runtime)
 
@@ -70,7 +99,7 @@ The test proves TCP connectivity on port 9026, not that a Switch payload or expl
 
 ## Automatic GitHub Releases
 
-Pushes to **main**, including new commits, and manual Actions runs produce a successful-build Actions artifact AND a development prerelease tagged **dev-N (GitHub run number)**, containing firmware.bin, sd-payloads.zip, and upstream-source.zip. A version tag beginning in **v** (for example v0.1.0) produces a regular versioned Release.
+Pushes to **main**, including new commits, and manual Actions runs produce a successful-build Actions artifact AND a development prerelease tagged **dev-N (GitHub run number)**, containing firmware.bin, sd-payloads.zip, upstream-source.zip and picoswitch-source.zip. A version tag beginning in **v** (for example v0.1.0) produces a regular versioned Release.
 
 - Releases: https://github.com/brycebrower2008/CivSwitch-Cardputer/releases
 - Actions: https://github.com/brycebrower2008/CivSwitch-Cardputer/actions
