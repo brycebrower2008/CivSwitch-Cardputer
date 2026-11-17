@@ -344,11 +344,23 @@ void draw() {
       header("USB / BLUETOOTH HID");
       lineAt(25, String("Mode: ") + (CivHid::transport()==CivHid::Transport::USB ? "USB-C (primary)" : "BLE (experimental)"), TFT_CYAN);
       lineAt(40, CivHid::stateLabel());
+      #ifdef CIV_SWITCH_USB_TEST
+      lineAt(56, "USB: Switch gamepad test ONLY");
+#else
       lineAt(56, "USB: keyboard + gamepad");
+#endif
       lineAt(70, "BLE: generic HID, not Switch2");
       lineAt(84, "T: send A only (NO typing)");
+      #ifdef CIV_SWITCH_USB_TEST
+      lineAt(98, "USB macro disabled; use main build");
+#else
       lineAt(98, "M: SD Civ7 bootstrap macro");
+#endif
+      #ifdef CIV_SWITCH_USB_TEST
+      footer("U:USB L:BLE T:Test X:Back");
+#else
       footer("U:USB L:BLE T:Test M:Macro X:Back");
+#endif
       break;
     case Page::HID_CONFIRM:
       header("CONFIRM HID MACRO");
@@ -664,6 +676,7 @@ void loop() {
 
   pollSender();
   CivMacro::tick();
+  CivHid::poll();
   if (page == Page::HID_RUNNING && !CivMacro::running()) {
     go(Page::HID_RESULT);
   }
