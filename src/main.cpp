@@ -329,7 +329,7 @@ void draw() {
       d.drawRect(8, 102, 224, 12, TFT_WHITE);
       d.fillRect(10, 104, 220, 8, TFT_BLACK);
       if (progress) d.fillRect(10, 104, (progress*220)/100, 8, TFT_GREEN);
-      footer("X:Abort   USB:serial logs");
+      footer("X:Abort  Logs shown on screen");
       break;
     case Page::PAYLOAD_RESULT:
       header("SEND RESULT");
