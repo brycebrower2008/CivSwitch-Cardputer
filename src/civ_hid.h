@@ -16,6 +16,7 @@ bool keyDownAscii(char c);
 bool keyDownSpecial(uint8_t code);
 void keyUp();
 bool gamepadA(bool down);
+bool gamepadLR(bool down);
 void releaseAll();
 } // namespace CivHid
 
