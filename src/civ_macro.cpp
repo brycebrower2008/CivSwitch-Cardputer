@@ -77,6 +77,10 @@ bool CivMacro::inspect(const char* path) {
 }
 
 bool CivMacro::start() {
+#ifdef CIV_SWITCH_USB_DUAL
+  message="Dual USB beta: exploit disabled until keyboard hardware test";
+  return false;
+#endif
 #ifdef CIV_SWITCH_USB_TEST
   if (CivHid::transport()==CivHid::Transport::USB) {
     message="USB test image: no keyboard";
