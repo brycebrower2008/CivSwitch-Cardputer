@@ -26,6 +26,50 @@ All settings use the Cardputer keyboard. Original display rotation (0) is retain
 
 On first boot, press **A → Scan Wi-Fi networks**, choose your network, and type the password. The ESP32 Wi-Fi stack stores saved credentials for later boots. Under Setup → **Set Switch / PC IP**, enter your Switch or test-PC IPv4 address. It is stored in NVS. No WiFiManager/captive portal is used.
 
+## Combined USB controller + keyboard firmware (experimental hardware test)
+
+The known-good **USB controller-only** firmware remains
+`firmware-switch-usb-test.bin` (Switch 2 A and L+R tested successfully).
+An additional development build, **`firmware-usb-controller-keyboard-test.bin`**,
+is now built from `cardputer-adv-usb-combined`. It retains the same exact
+8-byte/no-report-ID Switch-compatible controller and adds a **USB keyboard**
+report using Arduino's USBHIDKeyboard API, plus the on-device Wi-Fi/SD sender.
+The original screen orientation, Wi-Fi configuration, SD script list,
+and normal TCP sender remain in this image.
+
+**Compatibility warning:** Arduino-ESP32 3.3.x currently puts both HID
+functions under one USB HID interface, while PicoSwitch uses **two separate
+USB interfaces** (gamepad and keyboard). This image is an *experiment*, not
+yet a confirmed CivSwitch solution. Adding keyboard reports to the gamepad
+descriptor can cause the Switch to ignore **both** input types. The
+controller-only binary is deliberately unchanged and remains your fallback.
+
+### Test sequence (no exploit execution)
+
+1. Flash `firmware-usb-controller-keyboard-test.bin` using the same
+   application-flashing method/offset you used for the working USB test.
+   Do not confuse this app image with `ble-switch2-fullflash.bin`.
+2. Plug a USB-C **data** cable into the Switch 2 so the Cardputer detects
+   the Switch's **USB VBUS**. Your earlier testing found that controller
+   USB enumeration worked when powered through the Switch, but not on
+   Cardputer battery alone. USB device mode needs a live USB host bus.
+3. On Switch 2 **Controllers → Change Grip/Order**, use **H → U → J**
+   to test L+R. Verify it registers; then use **H → U → T** to test A.
+4. Test keyboard input separately: connect the Cardputer to a PC by USB,
+   open **Notepad** and put the cursor in a blank document, then choose
+   **H → U → K**. This sends **only lowercase `k`, no Enter**.
+   A PC keyboard test proves only that the PC accepts reports, **not** that
+   Civilization VII or Switch 2 accepts text.
+5. **Do not use H → M → Y to enter the Civ VII bootstrap** until both the
+   controller and keyboard paths are verified on the intended host.
+   That command sends the real SD chat bootstrap and has save-data risk.
+
+Because this image combines two usages within one HID interface rather
+than using PicoSwitch's physically separate HID interfaces, we may need
+to migrate to a **native ESP-IDF/TinyUSB two-interface composite device**
+if the Switch does not accept it. No actual keyboard or exploit success
+is claimed here.
+
 ## Native Switch 2 Bluetooth controller (merged, separate test image)
 
 The repository includes a **real Switch 2 custom-BLE controller implementation** under
@@ -41,6 +85,7 @@ The wired Switch-compatible USB controller is preserved in the Arduino/PlatformI
 | --- | --- | --- |
 | `firmware-switch-usb-test.bin` | USB controller confirmed by Cardputer owner on Switch 2 | Arduino-based USB controller only; no keyboard |
 | `firmware.bin` | Compiles; USB keyboard unverified | Arduino UI, Wi-Fi, SD, generic USB HID and generic BLE HID (not Switch 2 native) |
+| `firmware-usb-controller-keyboard-test.bin` | CI build; actual Switch 2 combo unverified | Same working controller report **plus** experimental USB keyboard; menu/Wi-Fi/SD/TCP present |
 | `ble-switch2-fullflash.bin` | CI succeeded, actual owner pairing not yet tested | Native Switch 2 BLE Pro Controller only; no display, Wi-Fi, SD, USB HID, or keyboard |
 
 To test native Bluetooth, get the latest **ble-test-*** prerelease on
