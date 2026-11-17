@@ -2,14 +2,32 @@
 
 This folder is a **separate ESP-IDF 6.1 program** for the Cardputer-Adv (ESP32-S3). It uses the upstream [espp/switch2_pro 1.4.3](https://components.espressif.com/components/espp/switch2_pro) driver, which implements the Switch 2 Pro Controller's proprietary BLE GATT, pairing handshake, bond storage, and continuous input reports. The upstream author reports successful tests on ESP32-S3 with a real Switch 2.
 
-**Important:** This is a **BLE pairing/controller test image, not a replacement for the main CivSwitch-Cardputer firmware**. Because of the ESP-IDF/Arduino framework incompatibility, it does *not yet* include the original Cardputer screen, Wi-Fi, SD sender, USB keyboard, or exploit bootstrap. The LCD will be blank. The project keeps the original USB firmware on `main` untouched, so you can test USB before choosing whether to flash this **separate image**. Compiling this code does not prove the Switch 2 accepts it on your particular device.
+**Important:** This is a **BLE pairing/controller test image, not a replacement for the main CivSwitch-Cardputer firmware**. Because of the ESP-IDF/Arduino framework incompatibility, it does *not yet* include the original Cardputer screen, Wi-Fi, SD sender, USB keyboard, or exploit bootstrap. The LCD will be blank. The independent USB firmware and its proven Switch-compatible controller reports are retained on `main`; choose which **separate image** to flash for each test. Compiling this code does not prove the Switch 2 accepts it on your particular device.
+
+## Two different firmware builds — not one combined image
+
+After this branch is merged into `main`, the repository will include **both**
+the previously tested USB controller firmware (`firmware-switch-usb-test.bin`)
+and this standalone native Switch 2 BLE firmware
+(`ble-switch2-fullflash.bin`). They are built separately because the Switch 2
+BLE protocol currently relies on ESP-IDF 6.1/NimBLE, while the USB/Wi-Fi/SD
+firmware is written with Arduino/PlatformIO. **Flashing one replaces the other
+on the Cardputer; they cannot run together in the current implementation.**
+
+A Switch 2 Pro Controller Bluetooth connection **cannot transmit arbitrary
+keyboard keystrokes**; its custom Nintendo GATT services carry controller
+reports. Standard Bluetooth LE keyboard HID is a separate protocol, and direct
+BLE keyboard pairing is not established as supported on Switch 2. Do not
+assume that the final Civ VII chat bootstrap can run wirelessly. The proven
+controller + a USB keyboard interface are separate requirements; combining
+them into one image needs additional framework and keyboard integration.
 
 ## Build and test
 
-- Target hardware: **M5Stack Cardputer-Adv only**, ESP32-S3FN8, 8MB flash, G0 button on GPIO0.
+- Target hardware: **M5Stack Cardputer-Adv only**, ESP32-S3FN8, 8MB flash, G0 button on GPIO0. No USB power is needed for Bluetooth pairing while the Cardputer battery is charged and its power switch is ON.
 - Toolchain: ESP-IDF **v6.1**, target `esp32s3`, registry dependencies pinned to `espp/switch2_pro==1.4.3`.
-- Build with `cd ble-switch2 && idf.py set-target esp32s3 && idf.py build && idf.py merge-bin -o build/ble-switch2-fullflash.bin -f raw`.
-- The independent GitHub Actions workflow produces `ble-switch2-fullflash.bin` on this feature branch. This is a **merged flash image**, unlike the application's `firmware.bin` in the Arduino build.
+- Build with `cd ble-switch2 && idf.py set-target esp32s3 && idf.py build && idf.py merge-bin -o ble-switch2-fullflash.bin -f raw`.
+- The independent GitHub Actions workflow (also triggered on `main`) produces `ble-switch2-fullflash.bin` on this feature branch. This is a **merged flash image**, unlike the application's `firmware.bin` in the Arduino build.
 
 **Warning:** Flashing this merged image replaces the installed firmware. Although its NVS partition is not intentionally erased, the new NVS initialization or an incompatible partition scheme can affect stored settings. Back up what you need and use a reputable ESP32-S3 flashing tool at **address 0x0**. Keep the original Cardputer USB firmware available for re-flashing after this test.
 
