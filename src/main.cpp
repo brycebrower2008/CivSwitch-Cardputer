@@ -4,6 +4,7 @@
 #include <WiFiClient.h>
 #include <Preferences.h>
 #include <SPI.h>
+#include <FS.h>
 #include <SD.h>
 #include <sys/socket.h>
 #include "civ_hid.h"
