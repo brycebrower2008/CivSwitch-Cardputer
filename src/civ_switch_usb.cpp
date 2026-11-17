@@ -3,7 +3,7 @@
 // USB identifiers 0x0F0D:0x0092 represent the HORI Pokken controller family for
 // controller interoperability testing; NOT produced or endorsed by HORI.
 #include "civ_switch_usb.h"
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
 #include <USB.h>
 #include <string.h>
 
