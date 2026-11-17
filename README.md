@@ -26,6 +26,45 @@ All settings use the Cardputer keyboard. Original display rotation (0) is retain
 
 On first boot, press **A → Scan Wi-Fi networks**, choose your network, and type the password. The ESP32 Wi-Fi stack stores saved credentials for later boots. Under Setup → **Set Switch / PC IP**, enter your Switch or test-PC IPv4 address. It is stored in NVS. No WiFiManager/captive portal is used.
 
+## Native Switch 2 Bluetooth controller (merged, separate test image)
+
+The repository includes a **real Switch 2 custom-BLE controller implementation** under
+[ble-switch2/](ble-switch2/) and its independent
+[build workflow](.github/workflows/build-switch2-ble.yml). It uses **ESP-IDF 6.1**
+and [espp/switch2_pro](https://github.com/esp-cpp/espp/tree/main/components/switch2_pro)
+to emulate a native Switch 2 Pro Controller over Nintendo's proprietary BLE GATT.
+The wired Switch-compatible USB controller is preserved in the Arduino/PlatformIO build.
+
+**These are separate firmware images, NOT a single combined image:**
+
+| Build / Release asset | Testing | What it does |
+| --- | --- | --- |
+| `firmware-switch-usb-test.bin` | USB controller confirmed by Cardputer owner on Switch 2 | Arduino-based USB controller only; no keyboard |
+| `firmware.bin` | Compiles; USB keyboard unverified | Arduino UI, Wi-Fi, SD, generic USB HID and generic BLE HID (not Switch 2 native) |
+| `ble-switch2-fullflash.bin` | CI succeeded, actual owner pairing not yet tested | Native Switch 2 BLE Pro Controller only; no display, Wi-Fi, SD, USB HID, or keyboard |
+
+To test native Bluetooth, get the latest **ble-test-*** prerelease on
+[Releases](https://github.com/brycebrower2008/CivSwitch-Cardputer/releases).
+Flash **`ble-switch2-fullflash.bin` as a full 8MB-flash-target image at offset `0x0`**
+(not as an app-only `firmware.bin`). The Cardputer's own battery can power it;
+no connection to Switch USB power is required for Bluetooth.
+On Switch 2 open **System Settings → Controllers → Pair New Controllers**.
+It advertises as **Pro Controller**. The physical Cardputer **G0/Boot** button
+sends **A** after pairing. It also briefly sends L+R for controller selection
+once input streaming begins. See [ble-switch2/README.md](ble-switch2/README.md)
+for detailed flashing, pairing, and saved-bond reset instructions.
+Flashing this image replaces the previous firmware and may affect stored settings.
+
+**Keyboard limitation:** The Switch 2's Pro Controller BLE connection cannot
+send arbitrary keyboard keystrokes. Generic BLE keyboard HID is a separate
+protocol and direct Switch 2 BLE keyboard pairing has not been verified.
+The Civilization VII chat phase still needs actual keyboard input or a
+separately verified alternative. For one combined firmware in the future,
+the UI, SD/Wi-Fi features, and tested USB controller need to be brought into
+the newer ESP-IDF/NimBLE runtime, with **USB keyboard HID for text input**.
+Pressing **L** in the current Arduino firmware only enables a generic BLE
+HID peripheral, NOT the native Switch 2 Pro Controller pairing implementation.
+
 ## Switch-compatible USB controller test (new experimental build)
 
 A Nintendo Switch 2 can enumerate the previous Cardputer USB HID interface even
