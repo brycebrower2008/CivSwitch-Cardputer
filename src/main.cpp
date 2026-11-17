@@ -55,6 +55,10 @@ static const char* SCRIPT_PATHS[SCRIPT_COUNT] = {
 static constexpr size_t MAX_LOADER_SIZE = 500000; // upstream loader limit
 int scriptSelected = 0;
 int readyScripts = 0;
+#ifdef CIV_SWITCH_USB_TEST
+bool lrTestHeld = false;
+uint32_t lrTestStarted = 0;
+#endif
 uint32_t scriptSize = 0, scriptSent = 0, senderStarted = 0;
 bool senderRunning = false, scriptDelivered = false, remoteSuccess = false, remoteError = false, remoteEmulator = false;
 String remoteLine, remoteLast = "No output", senderResult = "Not started";
@@ -352,12 +356,12 @@ void draw() {
       lineAt(70, "BLE: generic HID, not Switch2");
       lineAt(84, "T: send A only (NO typing)");
       #ifdef CIV_SWITCH_USB_TEST
-      lineAt(98, "USB macro disabled; use main build");
+      lineAt(98, "J: send L+R for pairing");
 #else
       lineAt(98, "M: SD Civ7 bootstrap macro");
 #endif
       #ifdef CIV_SWITCH_USB_TEST
-      footer("U:USB L:BLE T:Test X:Back");
+      footer("U:USB T:A J:L+R X:Back");
 #else
       footer("U:USB L:BLE T:Test M:Macro X:Back");
 #endif
@@ -581,6 +585,16 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
         if (CivMacro::testA()) go(Page::HID_RUNNING);
         else go(Page::HID_RESULT);
       }
+#ifdef CIV_SWITCH_USB_TEST
+      else if (c=='j') {
+        if (CivHid::transport()==CivHid::Transport::USB && CivHid::gamepadLR(true)) {
+          lrTestHeld=true;
+          lrTestStarted=millis();
+          status="Sent L+R pairing test";
+          drawingDirty=true;
+        }
+      }
+#endif
       else if (c=='m') {
         inspectSD();
         if (CivMacro::inspect()) go(Page::HID_CONFIRM);
@@ -677,6 +691,12 @@ void loop() {
   pollSender();
   CivMacro::tick();
   CivHid::poll();
+#ifdef CIV_SWITCH_USB_TEST
+  if (lrTestHeld && millis()-lrTestStarted>=650) {
+    CivHid::gamepadLR(false);
+    lrTestHeld=false;
+  }
+#endif
   if (page == Page::HID_RUNNING && !CivMacro::running()) {
     go(Page::HID_RESULT);
   }
