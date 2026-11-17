@@ -27,6 +27,18 @@ jobs:
         run: pio run -e cardputer-adv
       - name: Check compiled binary
         run: test -s .pio/build/cardputer-adv/firmware.bin
+      - name: Compile isolated Switch-compatible USB controller test
+        run: pio run -e cardputer-adv-usb-test
+      - name: Name USB test image separately
+        run: |
+          test -s .pio/build/cardputer-adv-usb-test/firmware.bin
+          cp .pio/build/cardputer-adv-usb-test/firmware.bin firmware-switch-usb-test.bin
+      - name: Upload isolated USB controller test
+        uses: actions/upload-artifact@v4
+        with:
+          name: CivSwitch-USB-controller-only-test
+          path: firmware-switch-usb-test.bin
+          if-no-files-found: error
       - name: Set up Node.js for upstream payload bundles
         uses: actions/setup-node@v4
         with:
@@ -95,13 +107,20 @@ jobs:
             scripts for the Cardputer microSD; upstream-source.zip is the pinned original source.
             Requires CivSwitch Remote JS Loader already running on a compatible Switch.
             File streaming follows the upstream TCP protocol but has NOT been hardware-tested.
-            USB keyboard + gamepad and experimental generic BLE HID are included.
+            firmware.bin keeps the previous keyboard + generic USB gamepad build.
+            firmware-switch-usb-test.bin is a separate controller-only USB test
+            using PicoSwitch's 8-byte gamepad descriptor and the compatible
+            HORI Pokken VID/PID 0x0F0D:0x0092; it intentionally has no USB
+            keyboard or chat exploit macro. Only flash one image at a time.
+            USB gamepad recognition on your Switch 2 still needs hardware testing.
+            Experimental generic BLE HID is included in both builds.
             Bootstrap.txt on the Cardputer SD holds the PicoSwitch chat-XSS macro.
             Nintendo Switch 2 USB gamepad recognition and BLE compatibility are NOT verified.
             Bluetooth is standard HID-over-GATT, not the Switch 2 proprietary controller BLE.
             Exploit, persistence and kaiHEN success are not verified by CI. Back up save data.
           files: |
             .pio/build/cardputer-adv/firmware.bin
+            firmware-switch-usb-test.bin
             sd-payloads.zip
             upstream-source.zip
             picoswitch-source.zip
@@ -113,6 +132,7 @@ jobs:
           generate_release_notes: true
           files: |
             .pio/build/cardputer-adv/firmware.bin
+            firmware-switch-usb-test.bin
             sd-payloads.zip
             upstream-source.zip
             picoswitch-source.zip
