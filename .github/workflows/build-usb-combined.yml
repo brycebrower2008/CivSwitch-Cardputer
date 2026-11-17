@@ -1,0 +1,68 @@
+name: Experimental Switch 2 USB controller and keyboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'platformio.ini'
+      - 'tools/platformio_fs_path.py'
+      - '.github/workflows/build-usb-combined.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'platformio.ini'
+      - 'tools/platformio_fs_path.py'
+      - '.github/workflows/build-usb-combined.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  combined-usb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Compile controller and keyboard USB test
+        run: pio run -e cardputer-adv-usb-combined
+      - name: Stage experimental image
+        run: |
+          test -s .pio/build/cardputer-adv-usb-combined/firmware.bin
+          cp .pio/build/cardputer-adv-usb-combined/firmware.bin firmware-usb-controller-keyboard-test.bin
+      - name: Upload image for hardware testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: Switch2-USB-controller-keyboard-experimental
+          path: firmware-usb-controller-keyboard-test.bin
+          if-no-files-found: error
+      - name: Publish separately labeled test release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: usb-combo-test-${{ github.run_number }}
+          name: Switch 2 USB controller + keyboard test ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          body: |
+            EXPERIMENTAL. Cardputer-Adv USB application image with the
+            Switch-compatible controller report confirmed in earlier USB-only
+            firmware, plus an unverified Arduino USB keyboard report.
+            Uses one HID interface, unlike PicoSwitch's two separate interfaces:
+            actual USB controller + keyboard operation on Switch 2 is unverified.
+
+            This is NOT a verified exploit image. Do not run the SD chat
+            bootstrap unless keyboard input and A/L+R both work on the target.
+            First test H > U > J (L+R) then H > U > T (A), then
+            H > U > K to type one harmless 'k' into a focused PC text field.
+            No automatic typing occurs on USB connection.
+
+            The firmware is an APPLICATION binary, not a fullflash image;
+            use the same flashing method as the previously tested USB version.
+            A live USB host/VBUS must be present (as observed by the user).
+            The known-good controller-only firmware remains in regular dev releases.
+          files: firmware-usb-controller-keyboard-test.bin
+          fail_on_unmatched_files: true
