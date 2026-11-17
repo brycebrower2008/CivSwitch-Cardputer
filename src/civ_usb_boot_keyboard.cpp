@@ -19,7 +19,7 @@
 
 namespace {
 constexpr uint8_t kReportLen = 8;
-constexpr uint16_t kKeyboardConfigLen = 9 + 9 + 7 + 7;
+constexpr uint16_t kKeyboardConfigLen = 9 + 9 + 7; // one interrupt IN endpoint
 
 // A boot keyboard's own 64-byte HID report descriptor. No report IDs.
 constexpr uint8_t kKeyboardReportDescriptor[] = {
@@ -39,7 +39,11 @@ static_assert(sizeof(kKeyboardReportDescriptor)==64,
 
 uint8_t g_interface=0xFF;
 uint8_t g_epIn=0;
-uint8_t g_epOut=0;
+uint8_t g_epOut=0; // optional; IN-only keyboard uses SET_REPORT for LEDs
+uint8_t g_openStage=0; // 0 not opened; 1 seen; 2 descriptor valid; 3 endpoint opened; 4 ready
+uint32_t g_openAttempts=0;
+uint32_t g_sentCount=0;
+uint8_t g_lastTransferError=0;
 uint8_t g_idle=0;
 uint8_t g_protocol=HID_PROTOCOL_REPORT;
 uint8_t g_ledState=0;
@@ -53,15 +57,13 @@ const uint8_t* g_hidDescriptor = nullptr;
 // and interface #1 to the CUSTOM keyboard interface.
 uint16_t keyboard_config_descriptor(uint8_t* dst, uint8_t* itf) {
   const uint8_t ep_in = tinyusb_get_free_in_endpoint();
-  const uint8_t ep_out = tinyusb_get_free_out_endpoint();
-  if (!ep_in || !ep_out) return 0;
+  if (!ep_in) return 0;
 
   uint8_t config[kKeyboardConfigLen] = {
-    0x09, 0x04, *itf, 0x00, 0x02, 0x03, 0x01, 0x01, 0x00,
+    0x09, 0x04, *itf, 0x00, 0x01, 0x03, 0x01, 0x01, 0x00,
     0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22,
     static_cast<uint8_t>(sizeof(kKeyboardReportDescriptor)), 0x00,
-    0x07, 0x05, static_cast<uint8_t>(0x80 | ep_in), 0x03, 0x08, 0x00, 0x01,
-    0x07, 0x05, ep_out, 0x03, 0x08, 0x00, 0x01
+    0x07, 0x05, static_cast<uint8_t>(0x80 | ep_in), 0x03, 0x08, 0x00, 0x01
   };
   static_assert(sizeof(config)==kKeyboardConfigLen, "Invalid keyboard configuration");
   std::memcpy(dst,config,sizeof(config));
@@ -82,6 +84,7 @@ bool kb_deinit() { return true; }
 void kb_reset(uint8_t) {
   g_interface=0xFF;
   g_epIn=g_epOut=0;
+  g_openStage=0;
   g_idle=0;
   g_protocol=HID_PROTOCOL_REPORT;
   g_ledState=0;
@@ -91,31 +94,34 @@ void kb_reset(uint8_t) {
 }
 
 uint16_t kb_open(uint8_t rhport, tusb_desc_interface_t const* intf, uint16_t length) {
-  // The built-in HID driver claims the gamepad. Claim only the next keyboard.
+  // TinyUSB application driver owns ONLY the boot keyboard, not the gamepad.
   if (intf->bInterfaceClass != TUSB_CLASS_HID ||
       intf->bInterfaceSubClass != HID_SUBCLASS_BOOT ||
-      intf->bInterfaceProtocol != HID_ITF_PROTOCOL_KEYBOARD ||
-      intf->bInterfaceNumber == 0 ||
-      intf->bNumEndpoints != 2 ||
+      intf->bInterfaceProtocol != HID_ITF_PROTOCOL_KEYBOARD) return 0;
+  ++g_openAttempts;
+  g_openStage=1;
+  if (intf->bInterfaceNumber == 0 ||
+      intf->bNumEndpoints != 1 ||
       length < kKeyboardConfigLen) return 0;
 
   const uint8_t* bytes = reinterpret_cast<const uint8_t*>(intf);
   const uint8_t* hid_desc = bytes + sizeof(tusb_desc_interface_t);
   if (hid_desc[1] != HID_DESC_TYPE_HID) return 0;
-
+  g_openStage=2;
   uint8_t in=0,out=0;
   const uint8_t* ep_desc = hid_desc + 9;
-  if (!usbd_open_edpt_pair(rhport, ep_desc, 2, TUSB_XFER_INTERRUPT, &out, &in) ||
-      !in || !out) return 0;
-
+  if (!usbd_open_edpt_pair(rhport, ep_desc, 1, TUSB_XFER_INTERRUPT, &out, &in) ||
+      !in) return 0;
+  g_openStage=3;
   g_interface=intf->bInterfaceNumber;
   g_epIn=in;
-  g_epOut=out;
+  g_epOut=0;
   g_hidDescriptor=hid_desc;
   g_protocol=HID_PROTOCOL_REPORT;
   g_idle=0;
-  // Listen for keyboard LED updates from the host.
-  if (!usb_xfer(g_epOut,g_outReport,sizeof(g_outReport))) return 0;
+  // Boot keyboards may receive LED states via control SET_REPORT; an OUT
+  // interrupt endpoint is optional, so none is needed here.
+  g_openStage=4;
   return kKeyboardConfigLen;
 }
 
@@ -192,9 +198,11 @@ bool send_key(uint8_t modifier,uint8_t usage) {
   g_inReport[0]=modifier;
   g_inReport[2]=usage;
   if (!usb_xfer(g_epIn,g_inReport,sizeof(g_inReport))) {
+    ++g_lastTransferError;
     usbd_edpt_release(0,g_epIn);
     return false;
   }
+  ++g_sentCount;
   return true;
 }
 
@@ -275,10 +283,21 @@ bool CivUsbBootKeyboard::pressSpecial(uint8_t usage) {
 void CivUsbBootKeyboard::releaseAll() {
   send_key(0,0);
 }
+uint32_t CivUsbBootKeyboard::reportCount() { return g_sentCount; }
+String CivUsbBootKeyboard::diagnostics() {
+  return String("D:") + String(g_registered ? 1 : 0) +
+    " M:" + String(tud_mounted() ? 1 : 0) +
+    " I:" + String(g_interface) +
+    " S:" + String(g_openStage) +
+    " A:" + String(g_openAttempts) +
+    " E:" + String(g_lastTransferError);
+}
 #else
 bool CivUsbBootKeyboard::begin() { return false; }
 bool CivUsbBootKeyboard::ready() { return false; }
 bool CivUsbBootKeyboard::pressAscii(char) { return false; }
 bool CivUsbBootKeyboard::pressSpecial(uint8_t) { return false; }
 void CivUsbBootKeyboard::releaseAll() {}
+uint32_t CivUsbBootKeyboard::reportCount() { return 0; }
+String CivUsbBootKeyboard::diagnostics() { return "USB keyboard disabled"; }
 #endif
