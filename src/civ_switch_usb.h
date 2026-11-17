@@ -11,6 +11,7 @@ class CivSwitchUsbPad : public USBHIDDevice {
   void begin();
   bool ready();
   bool setA(bool pressed);
+  bool setLR(bool pressed);
   bool send();
   void releaseAll();
   uint16_t _onGetDescriptor(uint8_t* dst) override;
