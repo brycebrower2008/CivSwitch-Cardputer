@@ -3,7 +3,12 @@ name: Experimental Switch 2 native BLE test firmware
 on:
   push:
     branches:
+      - main
       - feature/switch2-native-ble
+    paths:
+      - 'ble-switch2/**'
+      - '.github/workflows/build-switch2-ble.yml'
+  pull_request:
     paths:
       - 'ble-switch2/**'
       - '.github/workflows/build-switch2-ble.yml'
@@ -16,7 +21,7 @@ jobs:
   switch2-ble:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Bluetooth feature branch
+      - name: Check out source
         uses: actions/checkout@v4
       - name: Build native Switch 2 BLE firmware with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
@@ -36,7 +41,7 @@ jobs:
           path: ble-switch2/build/ble-switch2-fullflash.bin
           if-no-files-found: error
       - name: Publish BLE-only experimental prerelease
-        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/feature/switch2-native-ble')
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/switch2-native-ble')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ble-test-${{ github.run_number }}
