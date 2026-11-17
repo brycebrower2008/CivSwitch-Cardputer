@@ -24,7 +24,7 @@ jobs:
           esp_idf_version: v6.1
           target: esp32s3
           path: ble-switch2
-          command: idf.py build && idf.py merge-bin -o build/ble-switch2-fullflash.bin -f raw
+          command: idf.py build && idf.py merge-bin -o ble-switch2-fullflash.bin -f raw
       - name: Verify complete ESP32-S3 flash image
         run: |
           test -s ble-switch2/build/ble-switch2-fullflash.bin
