@@ -4,7 +4,7 @@
 
 namespace {
 enum class Phase {
-  IDLE, TEST_DOWN, TEST_UP,
+  IDLE, TEST_DOWN, TEST_UP, TEST_KEY_DOWN, TEST_KEY_UP,
   PRE_DOWN, PRE_UP, ESC_DOWN, ESC_UP, PAD_DOWN, PAD_UP,
   CHAR_DOWN, CHAR_UP, ENTER1_DOWN, ENTER1_UP, ENTER2_DOWN, ENTER2_UP,
   BETWEEN, BETWEEN_DOWN, BETWEEN_UP
@@ -100,6 +100,23 @@ bool CivMacro::start() {
   return true;
 }
 
+bool CivMacro::testKeyboard() {
+#ifdef CIV_SWITCH_USB_TEST
+  message="USB-only baseline has no keyboard";
+  return false;
+#else
+  if (phase!=Phase::IDLE || !CivHid::ready()) {
+    message="HID host not connected";
+    return false;
+  }
+  wasCompleted=false;
+  phase=Phase::TEST_KEY_DOWN;
+  due=millis()+800; // give time to release the on-device K key
+  message="Sending lowercase k; no Enter";
+  return true;
+#endif
+}
+
 bool CivMacro::testA() {
   if (phase!=Phase::IDLE || !CivHid::ready()) {
     message="HID host not connected";
@@ -134,6 +151,15 @@ void CivMacro::tick() {
     case Phase::TEST_UP:
       CivHid::gamepadA(false);
       finish("A sent; check Switch response",true);
+      return;
+    case Phase::TEST_KEY_DOWN:
+      if (!CivHid::keyDownAscii('k')) {
+        finish("Keyboard report failed",false); return;
+      }
+      phase=Phase::TEST_KEY_UP; due=now+70; return;
+    case Phase::TEST_KEY_UP:
+      CivHid::keyUp();
+      finish("Typed k; verify in text field",true);
       return;
     case Phase::PRE_DOWN:
       if (!CivHid::gamepadA(true)) { finish("Controller report failed",false); return; }
