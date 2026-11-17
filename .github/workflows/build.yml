@@ -40,6 +40,26 @@ jobs:
           npm ci --prefix upstream
       - name: Bundle loader-ready SD scripts
         run: node tools/prepare-sd.mjs
+      - name: Checkout pinned PicoSwitch USB HID macro generator
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/Gezine/CivSwitch.git picoswitch-upstream
+          git -C picoswitch-upstream fetch --depth 1 origin f6b0f2bd285e7b32c0a1968181046f18edd79708
+          git -C picoswitch-upstream checkout --detach f6b0f2bd285e7b32c0a1968181046f18edd79708
+          npm install --prefix picoswitch-upstream/PicoSwitch --no-audit --no-fund
+          (cd picoswitch-upstream/PicoSwitch && node compress.js)
+      - name: Stage and validate microSD USB HID bootstrap macro
+        shell: bash
+        run: |
+          cp picoswitch-upstream/PicoSwitch/payload.txt sd-package/civswitch/bootstrap.txt
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("sd-package/civswitch/bootstrap.txt")
+          rows=[r for r in p.read_text("ascii").splitlines() if r]
+          assert rows and len(rows)<=1024, "No HID bootstrap or too many lines"
+          assert all(len(r)<=253 and r.isprintable() for r in rows), "Invalid HID line"
+          print(f"Validated {len(rows)} HID bootstrap lines")
+          PY
       - name: Package SD scripts and corresponding upstream source
         shell: bash
         run: |
@@ -47,6 +67,8 @@ jobs:
           git -C upstream archive --format=zip --output="$PWD/upstream-source.zip" HEAD
           test -s sd-payloads.zip
           test -s upstream-source.zip
+          git -C picoswitch-upstream archive --format=zip --output="$PWD/picoswitch-source.zip" HEAD
+          test -s picoswitch-source.zip
       - name: Upload SD scripts artifact
         uses: actions/upload-artifact@v4
         with:
@@ -73,11 +95,16 @@ jobs:
             scripts for the Cardputer microSD; upstream-source.zip is the pinned original source.
             Requires CivSwitch Remote JS Loader already running on a compatible Switch.
             File streaming follows the upstream TCP protocol but has NOT been hardware-tested.
+            USB keyboard + gamepad and experimental generic BLE HID are included.
+            Bootstrap.txt on the Cardputer SD holds the PicoSwitch chat-XSS macro.
+            Nintendo Switch 2 USB gamepad recognition and BLE compatibility are NOT verified.
+            Bluetooth is standard HID-over-GATT, not the Switch 2 proprietary controller BLE.
             Exploit, persistence and kaiHEN success are not verified by CI. Back up save data.
           files: |
             .pio/build/cardputer-adv/firmware.bin
             sd-payloads.zip
             upstream-source.zip
+            picoswitch-source.zip
           fail_on_unmatched_files: true
       - name: Publish versioned Release (v* tag)
         if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
@@ -88,4 +115,5 @@ jobs:
             .pio/build/cardputer-adv/firmware.bin
             sd-payloads.zip
             upstream-source.zip
+            picoswitch-source.zip
           fail_on_unmatched_files: true
