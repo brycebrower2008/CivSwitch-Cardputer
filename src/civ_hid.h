@@ -4,6 +4,7 @@
 namespace CivHid {
 enum class Transport : uint8_t { USB = 0, BLE = 1 };
 void begin();
+void poll();
 void startBle();
 void setTransport(Transport target);
 Transport transport();
