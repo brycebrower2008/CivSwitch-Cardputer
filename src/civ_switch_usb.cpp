@@ -65,6 +65,11 @@ bool CivSwitchUsbPad::setA(bool down) {
   else report_[0]&=~0x04;
   return send();
 }
+bool CivSwitchUsbPad::setLR(bool down) {
+  if (down) report_[0]|=0x30; // L+R bits 4,5 in PicoSwitch layout
+  else report_[0]&=~0x30;
+  return send();
+}
 void CivSwitchUsbPad::releaseAll() {
   report_[0]=0; report_[1]=0; report_[2]=8;
   report_[3]=report_[4]=report_[5]=report_[6]=128;
