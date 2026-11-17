@@ -8,6 +8,8 @@ namespace CivMacro {
 bool inspect(const char* path = "/civswitch/bootstrap.txt");
 bool start();
 bool testA();
+// Harmless one-character keyboard probe, with NO Enter key or chat script.
+bool testKeyboard();
 void tick();
 void abort(const String &reason);
 bool running();
