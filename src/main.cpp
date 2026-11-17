@@ -59,6 +59,7 @@ File senderFile;
 
 String cut(String value, unsigned int width);
 void inspectSD();
+void go(Page next);
 void closeSender() {
   if (senderFile) senderFile.close();
   senderClient.stop();
