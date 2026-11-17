@@ -1,0 +1,59 @@
+name: Experimental Switch 2 native BLE test firmware
+
+on:
+  push:
+    branches:
+      - feature/switch2-native-ble
+    paths:
+      - 'ble-switch2/**'
+      - '.github/workflows/build-switch2-ble.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  switch2-ble:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Bluetooth feature branch
+        uses: actions/checkout@v4
+      - name: Build native Switch 2 BLE firmware with ESP-IDF 6.1.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1.1
+          target: esp32s3
+          path: ble-switch2
+          command: idf.py build && idf.py merge-bin -o build/ble-switch2-fullflash.bin -f raw
+      - name: Verify complete ESP32-S3 flash image
+        run: |
+          test -s ble-switch2/build/ble-switch2-fullflash.bin
+          du -h ble-switch2/build/ble-switch2-fullflash.bin
+      - name: Upload standalone BLE test image
+        uses: actions/upload-artifact@v4
+        with:
+          name: CivSwitch-Switch2-BLE-test-fullflash
+          path: ble-switch2/build/ble-switch2-fullflash.bin
+          if-no-files-found: error
+      - name: Publish BLE-only experimental prerelease
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/heads/feature/switch2-native-ble')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ble-test-${{ github.run_number }}
+          name: Switch 2 native BLE experimental pairing test ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          body: |
+            EXPERIMENTAL and standalone BLE-only Cardputer-Adv firmware using
+            espp/switch2_pro 1.4.3 and ESP-IDF v6.1.1 for the real Switch 2
+            custom BLE controller protocol (not generic HID-over-GATT).
+
+            This DOES NOT include the main Cardputer screen, USB HID, Wi-Fi,
+            SD payload sender, or exploit functionality. Its LCD is blank.
+            The G0 button sends a single A press after pairing.
+            Flash the merged binary at ESP32-S3 address 0x0 (full-flash image).
+            Flashing replaces the current firmware and may affect stored settings.
+            See ble-switch2/README.md before flashing.
+            CI does not prove that your Switch 2 will pair: hardware test required.
+          files: ble-switch2/build/ble-switch2-fullflash.bin
+          fail_on_unmatched_files: true
