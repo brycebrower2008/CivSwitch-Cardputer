@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#ifdef CIV_SWITCH_USB_TEST
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
 #include <USBHID.h>
 
 // Temporary controller-only USB compatibility image. HID keyboard is
