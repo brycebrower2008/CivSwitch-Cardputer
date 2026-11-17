@@ -1,13 +1,13 @@
 # Native Switch 2 Bluetooth test firmware (experimental)
 
-This folder is a **separate ESP-IDF 6.1.1 program** for the Cardputer-Adv (ESP32-S3). It uses the upstream [espp/switch2_pro 1.4.3](https://components.espressif.com/components/espp/switch2_pro) driver, which implements the Switch 2 Pro Controller's proprietary BLE GATT, pairing handshake, bond storage, and continuous input reports. The upstream author reports successful tests on ESP32-S3 with a real Switch 2.
+This folder is a **separate ESP-IDF 6.1 program** for the Cardputer-Adv (ESP32-S3). It uses the upstream [espp/switch2_pro 1.4.3](https://components.espressif.com/components/espp/switch2_pro) driver, which implements the Switch 2 Pro Controller's proprietary BLE GATT, pairing handshake, bond storage, and continuous input reports. The upstream author reports successful tests on ESP32-S3 with a real Switch 2.
 
 **Important:** This is a **BLE pairing/controller test image, not a replacement for the main CivSwitch-Cardputer firmware**. Because of the ESP-IDF/Arduino framework incompatibility, it does *not yet* include the original Cardputer screen, Wi-Fi, SD sender, USB keyboard, or exploit bootstrap. The LCD will be blank. The project keeps the original USB firmware on `main` untouched, so you can test USB before choosing whether to flash this **separate image**. Compiling this code does not prove the Switch 2 accepts it on your particular device.
 
 ## Build and test
 
 - Target hardware: **M5Stack Cardputer-Adv only**, ESP32-S3FN8, 8MB flash, G0 button on GPIO0.
-- Toolchain: ESP-IDF **v6.1.1**, target `esp32s3`, registry dependencies pinned to `espp/switch2_pro==1.4.3`.
+- Toolchain: ESP-IDF **v6.1**, target `esp32s3`, registry dependencies pinned to `espp/switch2_pro==1.4.3`.
 - Build with `cd ble-switch2 && idf.py set-target esp32s3 && idf.py build && idf.py merge-bin -o build/ble-switch2-fullflash.bin -f raw`.
 - The independent GitHub Actions workflow produces `ble-switch2-fullflash.bin` on this feature branch. This is a **merged flash image**, unlike the application's `firmware.bin` in the Arduino build.
 
