@@ -6,6 +6,8 @@
 #include <SPI.h>
 #include <SD.h>
 #include <sys/socket.h>
+#include "civ_hid.h"
+#include "civ_macro.h"
 
 // CivSwitch Cardputer-Adv: local configuration + TCP test + SD inspection.
 // No exploit, jailbreak, or arbitrary payload sender is implemented.
@@ -19,7 +21,7 @@ static constexpr int SD_MOSI = 14;
 static constexpr int MAX_NETWORKS = 16;
 
 enum class Page { HOME, MENU, WIFI_SCAN, WIFI_LIST, EDIT_SSID, EDIT_PASSWORD,
-                  EDIT_IP, CONNECTING, DIAGNOSTICS, SD_INFO, PAYLOAD_LIST, PAYLOAD_CONFIRM, PAYLOAD_SEND, PAYLOAD_RESULT };
+                  EDIT_IP, CONNECTING, DIAGNOSTICS, SD_INFO, PAYLOAD_LIST, PAYLOAD_CONFIRM, PAYLOAD_SEND, PAYLOAD_RESULT, HID_MENU, HID_CONFIRM, HID_RUNNING, HID_RESULT };
 Page page = Page::HOME;
 Preferences prefs;
 String switchIp = "192.168.1.100";
@@ -231,7 +233,7 @@ void draw() {
       d.drawRect(8, 109, 224, 9, TFT_WHITE);
       d.fillRect(10, 111, 220, 5, TFT_BLACK);
       if (progress) d.fillRect(10, 111, (220 * progress) / 100, 5, TFT_GREEN);
-      footer("A:Setup B:Diag P:Payload C:Test");
+      footer("A:Setup P:Payload H:HID C:TCP");
       break;
     }
     case Page::MENU:
@@ -336,6 +338,46 @@ void draw() {
       lineAt(82, cut(remoteLast, 36), TFT_CYAN);
       lineAt(99, "No marker = no proof of success");
       footer("X:Payload list  A:Home");
+      break;
+    case Page::HID_MENU:
+      header("USB / BLUETOOTH HID");
+      lineAt(25, String("Mode: ") + (CivHid::transport()==CivHid::Transport::USB ? "USB-C (primary)" : "BLE (experimental)"), TFT_CYAN);
+      lineAt(40, CivHid::stateLabel());
+      lineAt(56, "USB: keyboard + gamepad");
+      lineAt(70, "BLE: generic HID, not Switch2");
+      lineAt(84, "T: send A only (NO typing)");
+      lineAt(98, "M: SD Civ7 bootstrap macro");
+      footer("U:USB L:BLE T:Test M:Macro X:Back");
+      break;
+    case Page::HID_CONFIRM:
+      header("CONFIRM HID MACRO");
+      lineAt(25, "Cardputer SD bootstrap.txt", TFT_CYAN);
+      lineAt(40, String(CivMacro::totalLines()) + " chat lines (~20 minutes)");
+      lineAt(55, CivHid::stateLabel());
+      lineAt(70, "Focus Civ7 lobby chat first.");
+      lineAt(85, "May send exploit; save risk!", TFT_YELLOW);
+      lineAt(99, "Cannot confirm console execution");
+      footer("Y:RUN HID MACRO X:Cancel");
+      break;
+    case Page::HID_RUNNING:
+      header("HID MACRO");
+      lineAt(25, CivHid::stateLabel(), TFT_CYAN);
+      lineAt(41, CivMacro::status());
+      lineAt(57, "Done: "+String(CivMacro::lineNumber())+"/"+String(CivMacro::totalLines())+" lines");
+      lineAt(75, "Input reports: running");
+      d.drawRect(8, 100, 224, 11, TFT_WHITE);
+      d.fillRect(10, 102, 220, 7, TFT_BLACK);
+      d.fillRect(10, 102, (CivMacro::percent()*220)/100, 7, TFT_GREEN);
+      footer("X:STOP (may leave partial chat)");
+      break;
+    case Page::HID_RESULT:
+      header("HID RESULT");
+      lineAt(29, CivMacro::status(), CivMacro::completed()?TFT_GREEN:TFT_YELLOW);
+      lineAt(48, CivHid::stateLabel());
+      lineAt(67, "No guarantee Switch accepted it");
+      lineAt(86, "Run TCP sender after loader");
+      lineAt(104, "Never treat input as exploit OK");
+      footer("X:HID menu A:Home");
       break;
     case Page::SD_INFO:
       header("MICROSD PAYLOAD");
@@ -508,7 +550,8 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
 
   for (char c : k.word) {
     if (page == Page::HOME) {
-      if (c == 'p') { scriptSelected = 0; inspectSD(); go(Page::PAYLOAD_LIST); }
+      if (c == 'h') { go(Page::HID_MENU); }
+      else if (c == 'p') { scriptSelected = 0; inspectSD(); go(Page::PAYLOAD_LIST); }
       else if (c == 'a') { menuSelected = 0; go(Page::MENU); }
       else if (c == 'b') go(Page::DIAGNOSTICS);
       else if (c == 'c') testPort();
@@ -518,6 +561,28 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
         status = "Wi-Fi reconnect requested";
         drawingDirty = true;
       }
+    } else if (page == Page::HID_MENU) {
+      if (c=='u') { CivHid::setTransport(CivHid::Transport::USB); drawingDirty=true; }
+      else if (c=='l') { CivHid::setTransport(CivHid::Transport::BLE); drawingDirty=true; }
+      else if (c=='t') {
+        if (CivMacro::testA()) go(Page::HID_RUNNING);
+        else go(Page::HID_RESULT);
+      }
+      else if (c=='m') {
+        inspectSD();
+        if (CivMacro::inspect()) go(Page::HID_CONFIRM);
+        else go(Page::HID_RESULT);
+      } else if (c=='x') go(Page::HOME);
+    } else if (page == Page::HID_CONFIRM) {
+      if (c=='y') {
+        if (CivMacro::start()) go(Page::HID_RUNNING);
+        else go(Page::HID_RESULT);
+      } else if (c=='x') go(Page::HID_MENU);
+    } else if (page == Page::HID_RUNNING) {
+      if (c=='x') { CivMacro::abort("User stopped HID macro"); go(Page::HID_RESULT); }
+    } else if (page == Page::HID_RESULT) {
+      if (c=='x') go(Page::HID_MENU);
+      else if (c=='a') go(Page::HOME);
     } else if (page == Page::PAYLOAD_LIST) {
       if (c == 'w' && scriptSelected > 0) { scriptSelected--; drawingDirty=true; }
       else if (c == 's' && scriptSelected < SCRIPT_COUNT-1) { scriptSelected++; drawingDirty=true; }
@@ -575,6 +640,7 @@ void setup() {
   M5Cardputer.begin(cfg, true);
   M5Cardputer.Display.setRotation(0); // Preserve the original orientation.
   M5Cardputer.Display.setTextWrap(false);
+  CivHid::begin(); // USB reports are sent only after user action.
   prefs.begin("civswitch", true);
   switchIp = prefs.getString("switch_ip", "192.168.1.100");
   prefs.end();
@@ -596,6 +662,11 @@ void loop() {
   }
 
   pollSender();
+  CivMacro::tick();
+  if (page == Page::HID_RUNNING && !CivMacro::running()) {
+    go(Page::HID_RESULT);
+  }
+  if ((page == Page::HID_RUNNING || page == Page::HID_MENU) && millis()-lastDraw>400) drawingDirty=true;
   if (page == Page::WIFI_SCAN) {
     int n = WiFi.scanComplete();
     if (n >= 0) {
