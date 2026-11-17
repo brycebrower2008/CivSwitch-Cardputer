@@ -77,6 +77,12 @@ bool CivMacro::inspect(const char* path) {
 }
 
 bool CivMacro::start() {
+#ifdef CIV_SWITCH_USB_TEST
+  if (CivHid::transport()==CivHid::Transport::USB) {
+    message="USB test image: no keyboard";
+    return false;
+  }
+#endif
   if (phase!=Phase::IDLE || !CivHid::ready()) {
     message="HID host not connected";
     return false;
