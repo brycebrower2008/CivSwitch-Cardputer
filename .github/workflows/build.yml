@@ -39,6 +39,18 @@ jobs:
           name: CivSwitch-USB-controller-only-test
           path: firmware-switch-usb-test.bin
           if-no-files-found: error
+      - name: Compile combined Switch USB controller plus keyboard experiment
+        run: pio run -e cardputer-adv-usb-combined
+      - name: Name combined USB HID image separately
+        run: |
+          test -s .pio/build/cardputer-adv-usb-combined/firmware.bin
+          cp .pio/build/cardputer-adv-usb-combined/firmware.bin firmware-usb-controller-keyboard-test.bin
+      - name: Upload experimental combined USB controller and keyboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: CivSwitch-USB-controller-and-keyboard-test
+          path: firmware-usb-controller-keyboard-test.bin
+          if-no-files-found: error
       - name: Set up Node.js for upstream payload bundles
         uses: actions/setup-node@v4
         with:
@@ -113,7 +125,15 @@ jobs:
             HORI Pokken VID/PID 0x0F0D:0x0092; it intentionally has no USB
             keyboard or chat exploit macro. Only flash one image at a time.
             USB gamepad recognition on your Switch 2 still needs hardware testing.
-            Experimental generic BLE HID is included in both builds.
+            firmware-usb-controller-keyboard-test.bin is an EXPERIMENTAL image
+            combining the same Switch-compatible 8-byte controller with a
+            keyboard report under Arduino's single HID USB interface.
+            A single HID interface is NOT equivalent to PicoSwitch's separate
+            controller and keyboard interfaces; actual Switch compatibility is
+            unverified. First test A and L+R, then one harmless 'k' in a
+            focused text field (H -> U -> K). Never infer typing success from
+            a successful compile, and do not run the exploit until verified.
+            Generic BLE HID remains experimental; not native Switch2.
             Bootstrap.txt on the Cardputer SD holds the PicoSwitch chat-XSS macro.
             Nintendo Switch 2 USB gamepad recognition and BLE compatibility are NOT verified.
             Bluetooth is standard HID-over-GATT, not the Switch 2 proprietary controller BLE.
@@ -121,6 +141,7 @@ jobs:
           files: |
             .pio/build/cardputer-adv/firmware.bin
             firmware-switch-usb-test.bin
+            firmware-usb-controller-keyboard-test.bin
             sd-payloads.zip
             upstream-source.zip
             picoswitch-source.zip
@@ -133,6 +154,7 @@ jobs:
           files: |
             .pio/build/cardputer-adv/firmware.bin
             firmware-switch-usb-test.bin
+            firmware-usb-controller-keyboard-test.bin
             sd-payloads.zip
             upstream-source.zip
             picoswitch-source.zip
