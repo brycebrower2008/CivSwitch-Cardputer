@@ -55,7 +55,7 @@ static const char* SCRIPT_PATHS[SCRIPT_COUNT] = {
 static constexpr size_t MAX_LOADER_SIZE = 500000; // upstream loader limit
 int scriptSelected = 0;
 int readyScripts = 0;
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
 bool lrTestHeld = false;
 uint32_t lrTestStarted = 0;
 #endif
@@ -348,7 +348,13 @@ void draw() {
       header("USB / BLUETOOTH HID");
       lineAt(25, String("Mode: ") + (CivHid::transport()==CivHid::Transport::USB ? "USB-C (primary)" : "BLE (experimental)"), TFT_CYAN);
       lineAt(40, CivHid::stateLabel());
-#if defined(CIV_SWITCH_USB_COMBINED)
+#ifdef CIV_SWITCH_USB_DUAL
+      lineAt(56, "USB: 2 HID interfaces (beta)");
+      lineAt(70, CivHid::keyboardReady() ? "Key iface enumerated" : "Key iface NOT ready");
+      lineAt(84, "T:A  J:L+R  K:Type one k");
+      lineAt(98, "Exploit macro DISABLED");
+      footer("U:USB T:A J:LR K:Key X:Back");
+#elif defined(CIV_SWITCH_USB_COMBINED)
       lineAt(56, "USB: Switch pad + keyboard BETA");
       lineAt(70, "1 HID iface; unverified host!");
       lineAt(84, "T:A  J:L+R  K:Type one 'k'");
@@ -582,14 +588,14 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
       }
     } else if (page == Page::HID_MENU) {
       if (c=='u') { CivHid::setTransport(CivHid::Transport::USB); drawingDirty=true; }
-#if !defined(CIV_SWITCH_USB_TEST) && !defined(CIV_SWITCH_USB_COMBINED)
+#if !defined(CIV_SWITCH_USB_TEST) && !defined(CIV_SWITCH_USB_COMBINED) && !defined(CIV_SWITCH_USB_DUAL) || defined(CIV_SWITCH_USB_DUAL)
       else if (c=='l') { CivHid::setTransport(CivHid::Transport::BLE); drawingDirty=true; }
 #endif
       else if (c=='t') {
         if (CivMacro::testA()) go(Page::HID_RUNNING);
         else go(Page::HID_RESULT);
       }
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
       else if (c=='j') {
         if (CivHid::transport()==CivHid::Transport::USB && CivHid::gamepadLR(true)) {
           lrTestHeld=true;
@@ -599,7 +605,7 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
         }
       }
 #endif
-#ifdef CIV_SWITCH_USB_COMBINED
+#if defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
       else if (c=='k') {
         if (CivHid::transport()==CivHid::Transport::USB && CivMacro::testKeyboard()) {
           go(Page::HID_RUNNING);
@@ -709,7 +715,7 @@ void loop() {
   pollSender();
   CivMacro::tick();
   CivHid::poll();
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
   if (lrTestHeld && millis()-lrTestStarted>=650) {
     CivHid::gamepadLR(false);
     lrTestHeld=false;
