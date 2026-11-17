@@ -55,7 +55,7 @@ static const char* SCRIPT_PATHS[SCRIPT_COUNT] = {
 static constexpr size_t MAX_LOADER_SIZE = 500000; // upstream loader limit
 int scriptSelected = 0;
 int readyScripts = 0;
-#ifdef CIV_SWITCH_USB_TEST
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
 bool lrTestHeld = false;
 uint32_t lrTestStarted = 0;
 #endif
@@ -348,22 +348,24 @@ void draw() {
       header("USB / BLUETOOTH HID");
       lineAt(25, String("Mode: ") + (CivHid::transport()==CivHid::Transport::USB ? "USB-C (primary)" : "BLE (experimental)"), TFT_CYAN);
       lineAt(40, CivHid::stateLabel());
-      #ifdef CIV_SWITCH_USB_TEST
+#if defined(CIV_SWITCH_USB_COMBINED)
+      lineAt(56, "USB: Switch pad + keyboard BETA");
+      lineAt(70, "1 HID iface; unverified host!");
+      lineAt(84, "T:A  J:L+R  K:Type one 'k'");
+      lineAt(98, "M: Macro ONLY after manual tests");
+      footer("T:A J:LR K:Key M:Macro X:Back");
+#elif defined(CIV_SWITCH_USB_TEST)
       lineAt(56, "USB: Switch gamepad test ONLY");
-#else
-      lineAt(56, "USB: keyboard + gamepad");
-#endif
-      lineAt(70, "BLE: generic HID, not Switch2");
-      lineAt(84, "T: send A only (NO typing)");
-      #ifdef CIV_SWITCH_USB_TEST
-      lineAt(98, "J: send L+R for pairing");
-#else
-      lineAt(98, "M: SD Civ7 bootstrap macro");
-#endif
-      #ifdef CIV_SWITCH_USB_TEST
+      lineAt(70, "No USB keyboard in this image");
+      lineAt(84, "T:A  J: L+R controller");
+      lineAt(98, "M: Exploit macro disabled");
       footer("U:USB T:A J:L+R X:Back");
 #else
-      footer("U:USB L:BLE T:Test M:Macro X:Back");
+      lineAt(56, "USB: generic keyboard + pad");
+      lineAt(70, "BLE: generic, not Switch2");
+      lineAt(84, "T: send A only (NO typing)");
+      lineAt(98, "M: SD Civ7 bootstrap macro");
+      footer("U:USB L:BLE T:A M:Macro X:Back");
 #endif
       break;
     case Page::HID_CONFIRM:
@@ -585,7 +587,7 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
         if (CivMacro::testA()) go(Page::HID_RUNNING);
         else go(Page::HID_RESULT);
       }
-#ifdef CIV_SWITCH_USB_TEST
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
       else if (c=='j') {
         if (CivHid::transport()==CivHid::Transport::USB && CivHid::gamepadLR(true)) {
           lrTestHeld=true;
@@ -595,10 +597,24 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
         }
       }
 #endif
+#ifdef CIV_SWITCH_USB_COMBINED
+      else if (c=='k') {
+        if (CivHid::transport()==CivHid::Transport::USB && CivMacro::testKeyboard()) {
+          go(Page::HID_RUNNING);
+        } else {
+          go(Page::HID_RESULT);
+        }
+      }
+#endif
       else if (c=='m') {
+#ifdef CIV_SWITCH_USB_TEST
+        status="Controller-only image: no USB keyboard";
+        go(Page::HID_RESULT);
+#else
         inspectSD();
         if (CivMacro::inspect()) go(Page::HID_CONFIRM);
         else go(Page::HID_RESULT);
+#endif
       } else if (c=='x') go(Page::HOME);
     } else if (page == Page::HID_CONFIRM) {
       if (c=='y') {
@@ -691,7 +707,7 @@ void loop() {
   pollSender();
   CivMacro::tick();
   CivHid::poll();
-#ifdef CIV_SWITCH_USB_TEST
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
   if (lrTestHeld && millis()-lrTestStarted>=650) {
     CivHid::gamepadLR(false);
     lrTestHeld=false;
