@@ -46,7 +46,15 @@ void CivSwitchUsbPad::begin() {
   // Must be set BEFORE USB.begin() so Switch sees them at enumeration.
   USB.VID(0x0F0D);
   USB.PID(0x0092);
+#ifdef CIV_SWITCH_USB_DUAL
+  // Different device revision/serial forces Windows to read the new two-HID
+  // configuration instead of reusing the controller-only interface cache.
+  USB.firmwareVersion(0x0210);
+  USB.productName("CivSwitch Dual HID Test");
+  USB.serialNumber("CIVSWITCH-DUALHID-2");
+#else
   USB.productName("Pokken-compatible Test Pad");
+#endif
   USB.manufacturerName("CivSwitch Community");
   USB.usbClass(0);
   USB.usbSubClass(0);
