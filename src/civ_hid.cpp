@@ -212,3 +212,10 @@ void CivHid::poll() {
   }
 #endif
 }
+
+bool CivHid::gamepadLR(bool down) {
+#ifdef CIV_SWITCH_USB_TEST
+  if (selected==Transport::USB && usbReady()) return usbTestPad.setLR(down);
+#endif
+  return false;
+}
