@@ -4,6 +4,7 @@
 #include <USBHIDKeyboard.h>
 #include <USBHIDGamepad.h>
 #include "civ_switch_usb.h"
+#include "civ_usb_boot_keyboard.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEHIDDevice.h>
@@ -13,7 +14,7 @@
 
 namespace {
 USBHID usbStatus;
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
 // Retain the byte-exact Nintendo-compatible controller tested on Switch 2.
 // The COMBINED build additionally registers a boot-keyboard HID report on the
 // same Arduino USB HID interface. Its host compatibility is NOT yet verified.
@@ -22,6 +23,8 @@ uint32_t lastTestReport = 0;
 #ifdef CIV_SWITCH_USB_COMBINED
 USBHIDKeyboard usbKeyboard;
 #endif
+// In the DUAL build, the keyboard is NOT an Arduino USBHIDKeyboard device.
+// It must enumerate separately using the custom TinyUSB HID class driver.
 #else
 USBHIDKeyboard usbKeyboard;
 USBHIDGamepad usbGamepad;
@@ -94,11 +97,17 @@ void notifyPad() {
 
 void CivHid::begin() {
   if (usbStarted) return;
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
 #ifdef CIV_SWITCH_USB_COMBINED
   // Initialize the keyboard report sender BEFORE USB starts. Its report is
   // HID_REPORT_ID_KEYBOARD (1), while the original gamepad remains report 0.
   usbKeyboard.begin(KeyboardLayout_en_US);
+#endif
+#ifdef CIV_SWITCH_USB_DUAL
+  if (!CivUsbBootKeyboard::begin()) {
+    Serial.println("USB boot keyboard interface registration failed");
+    return;
+  }
 #endif
   usbTestPad.begin();
   usbStarted=true;
@@ -137,16 +146,33 @@ void CivHid::setTransport(Transport target) {
 }
 CivHid::Transport CivHid::transport() { return selected; }
 bool CivHid::usbReady() {
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
   return usbStarted && usbTestPad.ready();
 #else
   return usbStarted && usbStatus.ready();
 #endif
 }
+bool CivHid::keyboardReady() {
+#ifdef CIV_SWITCH_USB_DUAL
+  return CivUsbBootKeyboard::ready();
+#elif defined(CIV_SWITCH_USB_TEST)
+  return false;
+#else
+  return usbReady();
+#endif
+}
 bool CivHid::bleReady() { return bleStarted && bleServer && bleServer->getConnectedCount()>0; }
 bool CivHid::ready() { return selected==Transport::USB ? usbReady() : bleReady(); }
 String CivHid::stateLabel() {
-  if (selected==Transport::USB) return usbReady() ? "USB gamepad ready" : "USB gamepad disconnected";
+  if (selected==Transport::USB) {
+#ifdef CIV_SWITCH_USB_DUAL
+    if (!usbReady()) return "USB pad disconnected";
+    if (!CivUsbBootKeyboard::ready()) return "USB pad ready / keyboard NOT";
+    return "USB pad + keyboard HID ready";
+#else
+    return usbReady() ? "USB gamepad ready" : "USB gamepad disconnected";
+#endif
+  }
   if (bleReady()) return "BLE HID connected";
   return bleStarted ? "BLE HID advertising" : "BLE HID stopped";
 }
@@ -154,8 +180,9 @@ bool CivHid::keyDownAscii(char c) {
   if (!ready()) return false;
   if (selected==Transport::USB) {
 #ifdef CIV_SWITCH_USB_TEST
-    // Controller-only baseline intentionally cannot emit USB text.
     return false;
+#elif defined(CIV_SWITCH_USB_DUAL)
+    return CivUsbBootKeyboard::pressAscii(c);
 #else
     return usbKeyboard.press((uint8_t)c)>0;
 #endif
@@ -171,6 +198,9 @@ bool CivHid::keyDownSpecial(uint8_t key) {
   if (selected==Transport::USB) {
 #ifdef CIV_SWITCH_USB_TEST
     return false;
+#elif defined(CIV_SWITCH_USB_DUAL)
+    return CivUsbBootKeyboard::pressSpecial(
+       key == CivHidKeys::ESC ? 41 : key == CivHidKeys::ENTER ? 40 : 0);
 #else
     return usbKeyboard.press(key)>0;
 #endif
@@ -182,7 +212,9 @@ bool CivHid::keyDownSpecial(uint8_t key) {
 }
 void CivHid::keyUp() {
   if (selected==Transport::USB) {
-#ifndef CIV_SWITCH_USB_TEST
+#ifdef CIV_SWITCH_USB_DUAL
+    CivUsbBootKeyboard::releaseAll();
+#elif !defined(CIV_SWITCH_USB_TEST)
     usbKeyboard.releaseAll();
 #endif
   }
@@ -191,7 +223,7 @@ void CivHid::keyUp() {
 bool CivHid::gamepadA(bool down) {
   if (!ready()) return false;
   if (selected==Transport::USB) {
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
     return usbTestPad.setA(down);
 #else
     if (down) return usbGamepad.pressButton(BUTTON_A);
@@ -201,10 +233,12 @@ bool CivHid::gamepadA(bool down) {
   blePadReport[0]=down ? 1 : 0; notifyPad(); return true;
 }
 void CivHid::releaseAll() {
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
   if (usbStarted) usbTestPad.releaseAll();
 #ifdef CIV_SWITCH_USB_COMBINED
   usbKeyboard.releaseAll();
+#elif defined(CIV_SWITCH_USB_DUAL)
+  CivUsbBootKeyboard::releaseAll();
 #endif
 #else
   usbKeyboard.releaseAll();
@@ -216,7 +250,7 @@ void CivHid::releaseAll() {
 }
 
 void CivHid::poll() {
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
   if (selected==Transport::USB && usbReady() && millis()-lastTestReport>=15) {
     lastTestReport=millis();
     usbTestPad.send(); // Poll even when neutral, as a wired Switch gamepad does.
@@ -225,7 +259,7 @@ void CivHid::poll() {
 }
 
 bool CivHid::gamepadLR(bool down) {
-#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED)
+#if defined(CIV_SWITCH_USB_TEST) || defined(CIV_SWITCH_USB_COMBINED) || defined(CIV_SWITCH_USB_DUAL)
   if (selected==Transport::USB && usbReady()) return usbTestPad.setLR(down);
 #endif
   return false;
