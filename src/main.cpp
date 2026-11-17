@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include "civ_hid.h"
 #include "civ_macro.h"
+#include "civ_usb_boot_keyboard.h"
 
 // CivSwitch Cardputer-Adv: local configuration + TCP test + SD inspection.
 // No exploit, jailbreak, or arbitrary payload sender is implemented.
@@ -350,9 +351,9 @@ void draw() {
       lineAt(40, CivHid::stateLabel());
 #ifdef CIV_SWITCH_USB_DUAL
       lineAt(56, "USB: 2 HID interfaces (beta)");
-      lineAt(70, CivHid::keyboardReady() ? "Key iface enumerated" : "Key iface NOT ready");
+      lineAt(70, CivUsbBootKeyboard::diagnostics());
       lineAt(84, "T:A  J:L+R  K:Type one k");
-      lineAt(98, "Exploit macro DISABLED");
+      lineAt(98, "Key TX: " + String(CivUsbBootKeyboard::reportCount()));
       footer("U:USB T:A J:LR K:Key X:Back");
 #elif defined(CIV_SWITCH_USB_COMBINED)
       lineAt(56, "USB: Switch pad + keyboard BETA");
@@ -588,7 +589,7 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
       }
     } else if (page == Page::HID_MENU) {
       if (c=='u') { CivHid::setTransport(CivHid::Transport::USB); drawingDirty=true; }
-#if !defined(CIV_SWITCH_USB_TEST) && !defined(CIV_SWITCH_USB_COMBINED) && !defined(CIV_SWITCH_USB_DUAL) || defined(CIV_SWITCH_USB_DUAL)
+#if !defined(CIV_SWITCH_USB_TEST) && !defined(CIV_SWITCH_USB_COMBINED) && !defined(CIV_SWITCH_USB_DUAL)
       else if (c=='l') { CivHid::setTransport(CivHid::Transport::BLE); drawingDirty=true; }
 #endif
       else if (c=='t') {
