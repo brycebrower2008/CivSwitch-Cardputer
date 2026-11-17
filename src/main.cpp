@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <SPI.h>
 #include <SD.h>
+#include <sys/socket.h>
 
 // CivSwitch Cardputer-Adv: local configuration + TCP test + SD inspection.
 // No exploit, jailbreak, or arbitrary payload sender is implemented.
@@ -18,7 +19,7 @@ static constexpr int SD_MOSI = 14;
 static constexpr int MAX_NETWORKS = 16;
 
 enum class Page { HOME, MENU, WIFI_SCAN, WIFI_LIST, EDIT_SSID, EDIT_PASSWORD,
-                  EDIT_IP, CONNECTING, DIAGNOSTICS, SD_INFO };
+                  EDIT_IP, CONNECTING, DIAGNOSTICS, SD_INFO, PAYLOAD_LIST, PAYLOAD_CONFIRM, PAYLOAD_SEND, PAYLOAD_RESULT };
 Page page = Page::HOME;
 Preferences prefs;
 String switchIp = "192.168.1.100";
@@ -36,6 +37,158 @@ uint32_t payloadSize = 0, checksOK = 0, checksFail = 0;
 uint32_t lastProbe = 0, lastDraw = 0, connectStart = 0;
 int networkCount = 0, selected = 0, menuSelected = 0, progress = 0;
 bool drawingDirty = true;
+
+// Upstream source runs inside the console's existing CivSwitch Remote JS Loader.
+// We only stream prebuilt JavaScript files from Cardputer microSD over TCP 9026.
+static constexpr int SCRIPT_COUNT = 4;
+static const char* SCRIPT_LABELS[SCRIPT_COUNT] = {
+  "FS privilege promotion", "FS + kaiHEN full chain",
+  "FS + SD chain", "kaiHEN after promotion"
+};
+static const char* SCRIPT_PATHS[SCRIPT_COUNT] = {
+  "/civswitch/fs.js", "/civswitch/chain.js",
+  "/civswitch/chain-sd.js", "/civswitch/kaihen.js"
+};
+static constexpr size_t MAX_LOADER_SIZE = 500000; // upstream loader limit
+int scriptSelected = 0;
+uint32_t scriptSize = 0, scriptSent = 0, senderStarted = 0;
+bool senderRunning = false, scriptDelivered = false, remoteSuccess = false, remoteError = false, remoteEmulator = false;
+String remoteLine, remoteLast = "No output", senderResult = "Not started";
+WiFiClient senderClient;
+File senderFile;
+
+String cut(String value, unsigned int width);
+void inspectSD();
+void closeSender() {
+  if (senderFile) senderFile.close();
+  senderClient.stop();
+  senderRunning = false;
+}
+void onRemoteLine(const String& line) {
+  if (line.length() == 0) return;
+  remoteLast = cut(line, 38);
+  Serial.println("REMOTE: " + line);
+  if (line.indexOf("CIVSWITCH-EMU/1") >= 0) remoteEmulator = true;
+  if (line.indexOf("You just Civ Sevened your machine") >= 0 ||
+      line.indexOf("HEN IS RUNNING") >= 0) remoteSuccess = true;
+  if (line.indexOf("Installation failed") >= 0 ||
+      line.indexOf("KH: failed") >= 0 ||
+      line.indexOf("CHAIN: promotion did not retain") >= 0 ||
+      line.indexOf("No promoted CivSwitchFS session") >= 0) remoteError = true;
+  drawingDirty = true;
+}
+void endSend(const String& detail) {
+  if (remoteLine.length()) { onRemoteLine(remoteLine); remoteLine = ""; }
+  closeSender();
+  if (remoteEmulator) senderResult = "PC emulator only (no execution)";
+  else if (remoteError) senderResult = "Remote reported an error";
+  else if (remoteSuccess) senderResult = "Success marker reported";
+  else senderResult = detail;
+  status = senderResult;
+  go(Page::PAYLOAD_RESULT);
+}
+bool prepareSelectedPayload() {
+  if (!sdPresent) inspectSD();
+  if (!sdPresent) { senderResult = "No microSD card mounted"; return false; }
+  File f = SD.open(SCRIPT_PATHS[scriptSelected], FILE_READ);
+  if (!f || f.isDirectory()) { if (f) f.close(); senderResult = "Missing selected .js file"; return false; }
+  scriptSize = f.size();
+  f.close();
+  if (scriptSize == 0 || scriptSize >= MAX_LOADER_SIZE) {
+    senderResult = "JS must be 1 to 499999 bytes"; return false;
+  }
+  return true;
+}
+void beginPayloadSend() {
+  if (WiFi.status() != WL_CONNECTED) {
+    senderResult = "Connect Cardputer to Wi-Fi first";
+    go(Page::PAYLOAD_RESULT);
+    return;
+  }
+  if (!prepareSelectedPayload()) { go(Page::PAYLOAD_RESULT); return; }
+  IPAddress target;
+  if (!target.fromString(switchIp)) {
+    senderResult = "Set a valid target IPv4 address";
+    go(Page::PAYLOAD_RESULT);
+    return;
+  }
+  remoteSuccess = remoteError = remoteEmulator = scriptDelivered = false;
+  remoteLast = "Connecting to loader...";
+  remoteLine = "";
+  senderResult = "Connecting...";
+  scriptSent = 0;
+  senderClient.stop();
+  if (!senderClient.connect(target, PORT, 1800)) {
+    senderResult = "TCP 9026 not accepting connections";
+    go(Page::PAYLOAD_RESULT);
+    return;
+  }
+  senderFile = SD.open(SCRIPT_PATHS[scriptSelected], FILE_READ);
+  if (!senderFile) {
+    senderResult = "Could not reopen SD file";
+    closeSender();
+    go(Page::PAYLOAD_RESULT);
+    return;
+  }
+  senderStarted = millis();
+  senderRunning = true;
+  progress = 0;
+  go(Page::PAYLOAD_SEND);
+}
+
+// Stream in small slices so keyboard/display updates continue.
+// Socket half-close matches upstream Node.js socket.end(), allowing loader logs
+// to arrive over the same TCP connection after the payload body has been sent.
+void pollSender() {
+  if (!senderRunning || page != Page::PAYLOAD_SEND) return;
+  if (!scriptDelivered) {
+    if (senderFile.available()) {
+      uint8_t buf[1024];
+      size_t bytes = senderFile.read(buf, sizeof(buf));
+      size_t offset = 0;
+      while (offset < bytes) {
+        int written = senderClient.write(buf + offset, bytes - offset);
+        if (written <= 0) {
+          senderResult = "TCP write failed";
+          endSend(senderResult);
+          return;
+        }
+        offset += (size_t)written;
+        scriptSent += written;
+      }
+      progress = scriptSize ? (int)(80ULL * scriptSent / scriptSize) : 0;
+      drawingDirty = true;
+    }
+    if (!senderFile.available()) {
+      senderFile.close();
+      if (senderClient.fd() < 0 || ::shutdown(senderClient.fd(), SHUT_WR) != 0) {
+        endSend("Could not finish TCP request");
+        return;
+      }
+      scriptDelivered = true;
+      progress = 85;
+      remoteLast = "Script sent; awaiting logs...";
+      drawingDirty = true;
+    }
+  } else {
+    unsigned int budget = 512;
+    while (budget-- && senderClient.available()) {
+      char c = (char)senderClient.read();
+      if (c == '\n') { onRemoteLine(remoteLine); remoteLine = ""; }
+      else if (c >= 32 || c == '\t') {
+        if (remoteLine.length() < 150) remoteLine += c;
+      }
+    }
+    if (!senderClient.connected() && senderClient.available() == 0) {
+      endSend("Remote finished without success marker");
+      return;
+    }
+  }
+  if (millis() - senderStarted > 900000UL) {
+    endSend("15 minute timeout; result unverified");
+  }
+}
+
 
 void go(Page next) { page = next; drawingDirty = true; }
 String cut(String value, unsigned int width = 37) {
@@ -76,7 +229,7 @@ void draw() {
       d.drawRect(8, 109, 224, 9, TFT_WHITE);
       d.fillRect(10, 111, 220, 5, TFT_BLACK);
       if (progress) d.fillRect(10, 111, (220 * progress) / 100, 5, TFT_GREEN);
-      footer("A:Setup B:Diag C:Test R:WiFi");
+      footer("A:Setup B:Diag P:Payload C:Test");
       break;
     }
     case Page::MENU:
@@ -141,6 +294,46 @@ void draw() {
       lineAt(91, "SD: " + String(payloadPresent ? "payload found" : (sdPresent ? "payload missing" : "no card")));
       lineAt(104, cut(lastDiag));
       footer("A:Home C:Retest D:SD");
+      break;
+    case Page::PAYLOAD_LIST:
+      header("FS-KAIHEN SEND");
+      lineAt(23, "Scripts on Cardputer SD:", TFT_CYAN);
+      for (int i = 0; i < SCRIPT_COUNT; i++) {
+        lineAt(41 + i*17, String(scriptSelected==i ? "> " : "  ") +
+              SCRIPT_LABELS[i] + (sdPresent && SD.exists(SCRIPT_PATHS[i]) ? " [+]" : " [-]"),
+              scriptSelected==i ? TFT_YELLOW : TFT_WHITE);
+      }
+      footer("W/S:Choose ENTER:Check X:Home");
+      break;
+    case Page::PAYLOAD_CONFIRM:
+      header("CONFIRM SEND");
+      lineAt(27, SCRIPT_LABELS[scriptSelected], TFT_CYAN);
+      lineAt(41, cut(SCRIPT_PATHS[scriptSelected]));
+      lineAt(55, String(scriptSize) + " bytes -> " + switchIp + ":9026");
+      lineAt(73, "Risk: save corruption or crash", TFT_YELLOW);
+      lineAt(90, "Requires Switch Remote JS Loader");
+      lineAt(103, "And correct firmware/game setup");
+      footer("Y:SEND to Switch  X:Cancel");
+      break;
+    case Page::PAYLOAD_SEND:
+      header("PAYLOAD SENDER");
+      lineAt(24, SCRIPT_LABELS[scriptSelected], TFT_CYAN);
+      lineAt(42, "Sent: " + String(scriptSent) + "/" + String(scriptSize));
+      lineAt(59, scriptDelivered ? "Running remotely; reading logs" : "Transferring over Wi-Fi");
+      lineAt(76, cut(remoteLast, 36));
+      d.drawRect(8, 102, 224, 12, TFT_WHITE);
+      d.fillRect(10, 104, 220, 8, TFT_BLACK);
+      if (progress) d.fillRect(10, 104, (progress*220)/100, 8, TFT_GREEN);
+      footer("X:Abort   USB:serial logs");
+      break;
+    case Page::PAYLOAD_RESULT:
+      header("SEND RESULT");
+      lineAt(28, senderResult, remoteSuccess && !remoteEmulator ? TFT_GREEN : TFT_YELLOW);
+      lineAt(49, "Sent " + String(scriptSent) + "/" + String(scriptSize) + " bytes");
+      lineAt(66, "Loader output:");
+      lineAt(82, cut(remoteLast, 36), TFT_CYAN);
+      lineAt(99, "No marker = no proof of success");
+      footer("X:Payload list  A:Home");
       break;
     case Page::SD_INFO:
       header("MICROSD PAYLOAD");
@@ -307,7 +500,8 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
 
   for (char c : k.word) {
     if (page == Page::HOME) {
-      if (c == 'a') { menuSelected = 0; go(Page::MENU); }
+      if (c == 'p') { scriptSelected = 0; inspectSD(); go(Page::PAYLOAD_LIST); }
+      else if (c == 'a') { menuSelected = 0; go(Page::MENU); }
       else if (c == 'b') go(Page::DIAGNOSTICS);
       else if (c == 'c') testPort();
       else if (c == 'r') {
@@ -316,6 +510,18 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
         status = "Wi-Fi reconnect requested";
         drawingDirty = true;
       }
+    } else if (page == Page::PAYLOAD_LIST) {
+      if (c == 'w' && scriptSelected > 0) { scriptSelected--; drawingDirty=true; }
+      else if (c == 's' && scriptSelected < SCRIPT_COUNT-1) { scriptSelected++; drawingDirty=true; }
+      else if (c == 'x') go(Page::HOME);
+    } else if (page == Page::PAYLOAD_CONFIRM) {
+      if (c == 'y') beginPayloadSend();
+      else if (c == 'x') go(Page::PAYLOAD_LIST);
+    } else if (page == Page::PAYLOAD_SEND) {
+      if (c == 'x') endSend("Aborted by user; remote state unknown");
+    } else if (page == Page::PAYLOAD_RESULT) {
+      if (c == 'a') go(Page::HOME);
+      else if (c == 'x') go(Page::PAYLOAD_LIST);
     } else if (page == Page::MENU) {
       if (c == 'w' && menuSelected > 0) { menuSelected--; drawingDirty = true; }
       else if (c == 's' && menuSelected < 4) { menuSelected++; drawingDirty = true; }
@@ -342,6 +548,10 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
 
   if (k.enter) {
     if (page == Page::MENU) selectMenu();
+    else if (page == Page::PAYLOAD_LIST) {
+      if (prepareSelectedPayload()) go(Page::PAYLOAD_CONFIRM);
+      else go(Page::PAYLOAD_RESULT);
+    }
     else if (page == Page::WIFI_LIST && networkCount > 0) {
       pendingSsid = networks[selected];
       editor = "";
@@ -377,6 +587,7 @@ void loop() {
     handleKeyboard(M5Cardputer.Keyboard.keysState());
   }
 
+  pollSender();
   if (page == Page::WIFI_SCAN) {
     int n = WiFi.scanComplete();
     if (n >= 0) {
