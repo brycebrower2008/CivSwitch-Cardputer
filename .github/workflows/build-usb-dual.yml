@@ -1,0 +1,58 @@
+name: Verify two USB HID interfaces (Switch gamepad + boot keyboard)
+
+on:
+  push:
+    branches:
+      - feature/dual-interface-usb-hid
+    paths:
+      - 'src/**'
+      - 'platformio.ini'
+      - 'tools/**'
+      - '.github/workflows/build-usb-dual.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dual-usb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout two-interface feature
+        uses: actions/checkout@v4
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Compile dual-interface USB firmware
+        run: pio run -e cardputer-adv-usb-dual
+      - name: Stage dual USB test application
+        run: |
+          test -s .pio/build/cardputer-adv-usb-dual/firmware.bin
+          cp .pio/build/cardputer-adv-usb-dual/firmware.bin firmware-dual-usb-test.bin
+      - name: Upload USB test firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: CivSwitch-Two-USB-Interfaces-Test
+          path: firmware-dual-usb-test.bin
+          if-no-files-found: error
+      - name: Publish clearly marked experimental prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: usb-dual-test-${{ github.run_number }}
+          name: Two separate USB HID interfaces (experimental) ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          body: |
+            Experimental ESP32-S3 Cardputer application image.
+            - HID 0: the same 8-byte, no-report-ID Switch-compatible gamepad,
+              previously confirmed working by the user on Switch 2.
+            - HID 1: a separate 8-byte boot keyboard interface with NO report
+              ID, implemented as a custom TinyUSB driver.
+            - Press H -> U -> J (L+R), H -> U -> T (A), or H -> U -> K to
+              send one lowercase k with NO Enter into a focused text field.
+            - The exploit macro is intentionally disabled in this image.
+            - This is not hardware-tested or production firmware.
+            - USB VBUS and data connection from Switch/PC are required.
+            - This is an APP-ONLY binary, not a full 0x0 flash image.
+            - The known-good USB controller-only firmware remains unchanged.
+          files: firmware-dual-usb-test.bin
+          fail_on_unmatched_files: true
