@@ -51,6 +51,7 @@ static const char* SCRIPT_PATHS[SCRIPT_COUNT] = {
 };
 static constexpr size_t MAX_LOADER_SIZE = 500000; // upstream loader limit
 int scriptSelected = 0;
+int readyScripts = 0;
 uint32_t scriptSize = 0, scriptSent = 0, senderStarted = 0;
 bool senderRunning = false, scriptDelivered = false, remoteSuccess = false, remoteError = false, remoteEmulator = false;
 String remoteLine, remoteLast = "No output", senderResult = "Not started";
@@ -225,7 +226,7 @@ void draw() {
       lineAt(42, "Device IP: " + (WiFi.isConnected() ? WiFi.localIP().toString() : "--"));
       lineAt(55, "Switch IP: " + switchIp);
       lineAt(68, "Port 9026: " + String(fakeConsole ? "PC EMULATOR" : (portOpen ? "TCP OPEN" : "NOT CONNECTED")));
-      lineAt(81, "SD payload: " + String(payloadPresent ? "FOUND" : (sdPresent ? "MISSING" : "NO SD")));
+      lineAt(81, "SD JS scripts: " + String(readyScripts) + "/" + String(SCRIPT_COUNT));
       lineAt(94, status);
       d.drawRect(8, 109, 224, 9, TFT_WHITE);
       d.fillRect(10, 111, 220, 5, TFT_BLACK);
@@ -357,6 +358,7 @@ void inspectSD() {
   payloadPath = "";
   payloadHeader = "";
   payloadSize = 0;
+  readyScripts = 0;
   SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   if (!SD.begin(SD_CS, SPI, 10000000)) {
     status = "microSD not mounted";
@@ -364,6 +366,11 @@ void inspectSD() {
   }
   sdPresent = SD.cardType() != CARD_NONE;
   if (!sdPresent) return;
+  for (int i = 0; i < SCRIPT_COUNT; ++i) {
+    File f = SD.open(SCRIPT_PATHS[i], FILE_READ);
+    if (f && !f.isDirectory() && f.size() > 0 && f.size() < MAX_LOADER_SIZE) ++readyScripts;
+    if (f) f.close();
+  }
   const char* paths[] = {"/civswitch/payload.bin", "/payload.bin"};
   for (auto path : paths) {
     if (!SD.exists(path)) continue;
