@@ -26,6 +26,45 @@ All settings use the Cardputer keyboard. Original display rotation (0) is retain
 
 On first boot, press **A → Scan Wi-Fi networks**, choose your network, and type the password. The ESP32 Wi-Fi stack stores saved credentials for later boots. Under Setup → **Set Switch / PC IP**, enter your Switch or test-PC IPv4 address. It is stored in NVS. No WiFiManager/captive portal is used.
 
+## Switch-compatible USB controller test (new experimental build)
+
+A Nintendo Switch 2 can enumerate the previous Cardputer USB HID interface even
+when it does not accept the **generic Arduino USB gamepad reports**. For USB
+compatibility testing, Releases now include a second, separately named file:
+
+**`firmware-switch-usb-test.bin`** — an independent application image built
+from the `cardputer-adv-usb-test` PlatformIO environment.
+
+This image uses a **single 8-byte, no-report-ID USB gamepad** based on the
+[PicoSwitch](https://github.com/Gezine/CivSwitch) controller format, with the
+Hori Pokken-compatible USB identity (VID/PID `0x0F0D:0x0092`). It sends
+neutral gamepad reports periodically and supports **A** and **L+R** tests. The
+Bluetooth generic HID code, Wi-Fi tools, and menu remain available.
+
+**Deliberately disabled in this USB test image:** USB keyboard and the USB
+Civ VII chat macro. Do not try to run the exploit from this particular binary;
+its purpose is only to verify Switch 2 controller support. The normal
+`firmware.bin` remains the previous keyboard + generic gamepad firmware.
+
+### Test on your Switch 2
+
+1. Flash **`firmware-switch-usb-test.bin`** as an ESP32-S3 *application*
+   binary, using your usual flashing method and proper image offset/bootloader.
+   It is **not** a merged full-flash image.
+2. Disconnect the USB cable, reset the Cardputer, then reconnect its USB-C
+   data cable to the Switch 2 (dock or direct USB-C connection).
+3. On the Switch 2, open **Controllers → Change Grip/Order**.
+4. On the Cardputer, press **H → U**. Look for **USB gamepad ready**.
+   That means the USB interface is ready, not that controller input is accepted.
+5. Press **J** to send a 650 ms L+R pair selection. If the console registers
+   a controller, return to a harmless menu.
+6. Press **T** to send one A-button tap. Report whether the Switch reacts.
+
+If J and T still do nothing, we will need to examine the host-side USB
+recognition and whether the console accepts this controller identity, not just
+whether USB enumerates. Avoid running any chat payload until a working
+controller and keyboard are independently verified.
+
 ## USB HID and Bluetooth controls (experimental)
 
 The M5Stack Cardputer-Adv has a **native USB-C OTG device interface**. The firmware adds USB keyboard + generic USB gamepad HID, and an optional **generic BLE HID-over-GATT keyboard/gamepad**. These are **not yet proven compatible with the Switch 2**. In particular, the generic USB gamepad descriptor is not an exact port of PicoSwitch's dual-interface vendor controller; the Switch 2 Pro Controller uses a **proprietary BLE GATT protocol**, not generic BLE HID. The ESP32-S3 cannot use Bluetooth Classic.
