@@ -582,7 +582,9 @@ void handleKeyboard(const Keyboard_Class::KeysState &k) {
       }
     } else if (page == Page::HID_MENU) {
       if (c=='u') { CivHid::setTransport(CivHid::Transport::USB); drawingDirty=true; }
+#if !defined(CIV_SWITCH_USB_TEST) && !defined(CIV_SWITCH_USB_COMBINED)
       else if (c=='l') { CivHid::setTransport(CivHid::Transport::BLE); drawingDirty=true; }
+#endif
       else if (c=='t') {
         if (CivMacro::testA()) go(Page::HID_RUNNING);
         else go(Page::HID_RESULT);
